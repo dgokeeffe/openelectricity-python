@@ -28,7 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "hatch>=1.14.0",
+    "hatch<1.12.0",  # Pin to older version that doesn't require packaging.licenses
     "ruff>=0.8.3",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
@@ -42,7 +42,7 @@ analysis = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling<1.22.0"]  # Pin to older version without packaging.licenses requirement
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
@@ -100,8 +100,9 @@ testpaths = [
 
 [dependency-groups]
 dev = [
-    "hatch>=1.14.0",
+    "hatch<1.12.0", # Pin to older version that doesn't require packaging.licenses
     "pyright>=1.1.394",
     "pytest-sugar>=1.0.0",
+    "python-dotenv>=1.1.1",
     "ruff>=0.8.3",
 ]

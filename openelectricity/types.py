@@ -30,6 +30,9 @@ class DataMetric(str, Enum):
     ENERGY = "energy"
     EMISSIONS = "emissions"
     MARKET_VALUE = "market_value"
+    PRICE = "price"
+    DEMAND = "demand"
+    DEMAND_ENERGY = "demand_energy"
     RENEWABLE_PROPORTION = "renewable_proportion"
 
 
@@ -131,6 +134,6 @@ VALID_PRIMARY_GROUPINGS = ["network", "network_region"]
 VALID_SECONDARY_GROUPINGS = ["fueltech", "fueltech_group", "status", "renewable"]
 
 # Type aliases for documentation
-type Metric = str  # Union of DataMetric and MarketMetric values
+type Metric = str  # Union of DataMetric and MarketMetric values (all available metrics: power, energy, price, market_value, demand, demand_energy, emissions, renewable_proportion)
 type TimeSeriesResult = dict[str, Any]  # Matches ITimeSeriesResult
 type NetworkTimeSeries = dict[str, Any]  # Matches INetworkTimeSeries
