@@ -382,24 +382,25 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
 
         return pd.DataFrame(self.to_records())
 
-    def to_pyspark(self, spark_session=None, app_name: str = "OpenElectricity") -> "Optional['DataFrame']":  # noqa: F821
+    def to_pyspark(self, spark_session=None, use_batching: bool = False, batch_size: int = 10000) -> "Optional['DataFrame']":  # noqa: F821
         """
-        Convert time series data into a PySpark DataFrame.
+        Convert time series data into a PySpark DataFrame with optimized performance.
 
         Args:
             spark_session: Optional PySpark session. If not provided, will try to create one.
-            app_name: Name for the Spark application if creating a new session.
+            use_batching: Whether to use batched processing for large datasets (default: False)
+            batch_size: Number of records per batch when batching is enabled (default: 10000)
 
         Returns:
             A PySpark DataFrame containing the time series data, or None if PySpark is not available
         """
         try:
-            from openelectricity.spark_utils import get_spark_session
-            from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, VariantType
+            from openelectricity.spark_utils import get_spark_session, create_timeseries_schema, clean_timeseries_records_fast, create_timeseries_dataframe_batched
             import logging
             
             logger = logging.getLogger(__name__)
             
+            # Get records (this is already optimized)
             records = self.to_records()
             if not records:
                 return None
@@ -408,41 +409,22 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
             if spark_session is None:
                 spark_session = get_spark_session()
             
-            # Create schema directly from Pydantic model for better alignment
-            if records:
-                from openelectricity.spark_utils import infer_schema_from_data
-                
-                # Clean the records to ensure proper type conversion
-                cleaned_records = []
-                for record in records:
-                    cleaned_record = {}
-                    for key, value in record.items():
-                        if hasattr(value, 'isoformat'):  # Datetime objects
-                            # Convert timezone-aware datetime to UTC for TimestampType compatibility
-                            if hasattr(value, 'tzinfo') and value.tzinfo is not None:
-                                cleaned_record[key] = value.astimezone(dt.timezone.utc).replace(tzinfo=None)
-                            else:
-                                cleaned_record[key] = value  # Already naive datetime, assume UTC
-                        elif hasattr(value, 'value'):  # Enum objects
-                            cleaned_record[key] = str(value)
-                        elif isinstance(value, bool):
-                            cleaned_record[key] = value  # Keep booleans as booleans
-                        elif isinstance(value, (int, float)):
-                            cleaned_record[key] = float(value) if isinstance(value, int) and key in ['price', 'demand', 'value'] else value
-                        elif value is None:
-                            cleaned_record[key] = None
-                        else:
-                            cleaned_record[key] = value
-                    cleaned_records.append(cleaned_record)
-                
-                # Use improved schema inference that handles types better
-                timeseries_schema = infer_schema_from_data(cleaned_records, sample_size=50)
-                
-                logger.debug(f"Created schema with {len(timeseries_schema.fields)} fields aligned with timeseries data")
-                logger.debug(f"Schema: {timeseries_schema}")
-                return spark_session.createDataFrame(cleaned_records, schema=timeseries_schema)
+            # Choose processing method based on dataset size and user preference
+            if use_batching and len(records) > batch_size:
+                logger.debug(f"Using batched processing for {len(records)} records (batch size: {batch_size})")
+                return create_timeseries_dataframe_batched(records, spark_session, batch_size)
             else:
-                return None
+                # Use pre-defined schema for maximum performance (eliminates expensive schema inference)
+                timeseries_schema = create_timeseries_schema()
+                
+                # Fast data cleaning with optimized type conversion
+                cleaned_records = clean_timeseries_records_fast(records)
+                
+                logger.debug(f"Using optimized schema with {len(timeseries_schema.fields)} fields")
+                logger.debug(f"Processed {len(cleaned_records)} records with fast cleaning")
+                
+                # Create DataFrame with pre-defined schema for maximum performance
+                return spark_session.createDataFrame(cleaned_records, schema=timeseries_schema)
                 
         except ImportError:
             # Log warning but don't raise error to maintain compatibility

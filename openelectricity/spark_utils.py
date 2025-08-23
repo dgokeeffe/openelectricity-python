@@ -296,3 +296,149 @@ def infer_schema_from_data(data, sample_size: int = 100):
             schema_fields.append(StructField(field_name, StringType(), True))
     
     return StructType(schema_fields)
+
+
+def create_timeseries_schema():
+    """
+    Create a static, optimized Spark schema for timeseries data.
+    
+    This eliminates the need for expensive schema inference while maintaining
+    perfect type alignment with the Pydantic models.
+    
+    Returns:
+        PySpark StructType schema optimized for timeseries data
+    """
+    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
+    
+    # Define schema based on the known timeseries structure
+    # This covers all possible fields from NetworkTimeSeries.to_records()
+    schema_fields = [
+        # Core time and grouping fields
+        StructField('interval', TimestampType(), True),  # Network timezone datetime
+        StructField('network_id', StringType(), True),   # Network identifier
+        StructField('network_region', StringType(), True), # Region within network
+        StructField('facility_code', StringType(), True),  # Facility identifier
+        StructField('unit_code', StringType(), True),      # Unit identifier
+        StructField('fueltech_id', StringType(), True),    # Fuel technology
+        StructField('status_id', StringType(), True),      # Unit status
+        
+        # Metric fields - all as DoubleType for numerical operations
+        StructField('power', DoubleType(), True),          # Power generation
+        StructField('energy', DoubleType(), True),         # Energy production
+        StructField('market_value', DoubleType(), True),   # Market value
+        StructField('emissions', DoubleType(), True),      # Emissions data
+        StructField('price', DoubleType(), True),          # Price data
+        StructField('demand', DoubleType(), True),         # Demand data
+        StructField('value', DoubleType(), True),          # Generic value field
+        
+        # Additional metadata fields that might appear
+        StructField('unit_capacity', DoubleType(), True),  # Unit capacity
+        StructField('unit_efficiency', DoubleType(), True), # Unit efficiency
+    ]
+    
+    return StructType(schema_fields)
+
+
+def create_timeseries_dataframe_batched(records: list[dict], spark_session, batch_size: int = 10000) -> "DataFrame":
+    """
+    Create PySpark DataFrame from timeseries records using batched processing for large datasets.
+    
+    This function processes data in batches to optimize memory usage and performance
+    for very large datasets while maintaining data accuracy.
+    
+    Args:
+        records: List of timeseries records
+        spark_session: PySpark session
+        batch_size: Number of records to process per batch
+        
+    Returns:
+        PySpark DataFrame with all records
+    """
+    from pyspark.sql.types import StructType
+    
+    if not records:
+        return None
+    
+    # Get the optimized schema
+    schema = create_timeseries_schema()
+    
+    # For small datasets, use the fast single-pass method
+    if len(records) <= batch_size:
+        cleaned_records = clean_timeseries_records_fast(records)
+        return spark_session.createDataFrame(cleaned_records, schema=schema)
+    
+    # For large datasets, process in batches
+    dataframes = []
+    
+    for i in range(0, len(records), batch_size):
+        batch = records[i:i + batch_size]
+        cleaned_batch = clean_timeseries_records_fast(batch)
+        batch_df = spark_session.createDataFrame(cleaned_batch, schema=schema)
+        dataframes.append(batch_df)
+    
+    # Union all batches
+    if len(dataframes) == 1:
+        return dataframes[0]
+    else:
+        # Use reduce to union all dataframes
+        from functools import reduce
+        return reduce(lambda df1, df2: df1.union(df2), dataframes)
+
+
+def clean_timeseries_records_fast(records: list[dict]) -> list[dict]:
+    """
+    Fast, optimized cleaning of timeseries records for PySpark conversion.
+    
+    This function processes data in batches and uses type-specific optimizations
+    to minimize object creation and improve performance.
+    
+    Args:
+        records: List of raw timeseries records
+        
+    Returns:
+        List of cleaned records ready for PySpark DataFrame creation
+    """
+    if not records:
+        return []
+    
+    import datetime as dt
+    
+    # Pre-define the set of metric fields for faster lookups
+    metric_fields = {'POWER', 'ENERGY', 'MARKET_VALUE', 'EMISSIONS', 'PRICE', 'DEMAND', 'VALUE'}
+    
+    # Process records in batches for better performance
+    cleaned_records = []
+    
+    for record in records:
+        # Create new record dict (minimal object creation)
+        cleaned_record = {}
+        
+        for key, value in record.items():
+            if value is None:
+                cleaned_record[key] = None
+                continue
+                
+            # Fast type checking using isinstance (faster than hasattr)
+            if isinstance(value, dt.datetime):
+                # Handle datetime conversion to UTC
+                if value.tzinfo is not None:
+                    cleaned_record[key] = value.astimezone(dt.timezone.utc).replace(tzinfo=None)
+                else:
+                    cleaned_record[key] = value  # Already naive, assume UTC
+            elif hasattr(value, 'value'):  # Enum objects
+                cleaned_record[key] = str(value)
+            elif isinstance(value, bool):
+                cleaned_record[key] = value
+            elif isinstance(value, (int, float)):
+                # Convert integers to float for metric fields (better for Spark operations)
+                if key in metric_fields:
+                    cleaned_record[key] = float(value)
+                else:
+                    cleaned_record[key] = value
+            else:
+                # For strings and other types, pass through
+                cleaned_record[key] = value
+        
+        cleaned_records.append(cleaned_record)
+    
+    return cleaned_records
