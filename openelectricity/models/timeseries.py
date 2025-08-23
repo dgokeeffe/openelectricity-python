@@ -380,3 +380,36 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
             ) from None
 
         return pd.DataFrame(self.to_records())
+
+    def to_pyspark(self, spark_session=None, app_name: str = "OpenElectricity") -> "Optional['DataFrame']":  # noqa: F821
+        """
+        Convert time series data into a PySpark DataFrame.
+
+        Args:
+            spark_session: Optional PySpark session. If not provided, will try to create one.
+            app_name: Name for the Spark application if creating a new session.
+
+        Returns:
+            A PySpark DataFrame containing the time series data, or None if PySpark is not available
+        """
+        try:
+            from openelectricity.spark_utils import create_spark_dataframe
+            
+            # Convert to records and then to PySpark DataFrame
+            records = self.to_records()
+            if not records:
+                return None
+                
+            return create_spark_dataframe(records, spark_session=spark_session, app_name=app_name)
+            
+        except ImportError:
+            # Log warning but don't raise error to maintain compatibility
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning("PySpark not available. Install with: uv add 'openelectricity[analysis]'")
+            return None
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error converting to PySpark DataFrame: {e}")
+            return None

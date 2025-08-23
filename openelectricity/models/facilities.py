@@ -40,3 +40,51 @@ class FacilityResponse(APIResponse[Facility]):
     """Response model for facility endpoints."""
 
     data: list[Facility]
+
+    def to_pyspark(self, spark_session=None, app_name: str = "OpenElectricity") -> "Optional['DataFrame']":  # noqa: F821
+        """
+        Convert facility data into a PySpark DataFrame.
+
+        Args:
+            spark_session: Optional PySpark session. If not provided, will try to create one.
+            app_name: Name for the Spark application if creating a new session.
+
+        Returns:
+            A PySpark DataFrame containing the facility data, or None if PySpark is not available
+        """
+        try:
+            from openelectricity.spark_utils import create_spark_dataframe
+            
+            # Convert facilities to list of dictionaries
+            if not self.data:
+                return None
+                
+            # Convert each facility to dict, handling nested units
+            records = []
+            for facility in self.data:
+                facility_dict = facility.model_dump()
+                # Flatten units if needed
+                if facility_dict.get('units'):
+                    for unit in facility_dict['units']:
+                        unit_dict = unit.model_dump()
+                        # Combine facility and unit data
+                        combined = {**facility_dict, **unit_dict}
+                        # Remove the nested units list
+                        combined.pop('units', None)
+                        records.append(combined)
+                else:
+                    records.append(facility_dict)
+                
+            return create_spark_dataframe(records, spark_session=spark_session, app_name=app_name)
+            
+        except ImportError:
+            # Log warning but don't raise error to maintain compatibility
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning("PySpark not available. Install with: uv add 'openelectricity[analysis]'")
+            return None
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error converting to PySpark DataFrame: {e}")
+            return None
