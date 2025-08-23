@@ -395,7 +395,7 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
             A PySpark DataFrame containing the time series data, or None if PySpark is not available
         """
         try:
-            from openelectricity.spark_utils import get_spark_session, create_timeseries_schema, clean_timeseries_records_fast, create_timeseries_dataframe_batched
+            from openelectricity.spark_utils import get_spark_session, detect_timeseries_schema, clean_timeseries_records_fast, create_timeseries_dataframe_batched
             import logging
             
             logger = logging.getLogger(__name__)
@@ -414,13 +414,13 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
                 logger.debug(f"Using batched processing for {len(records)} records (batch size: {batch_size})")
                 return create_timeseries_dataframe_batched(records, spark_session, batch_size)
             else:
-                # Use pre-defined schema for maximum performance (eliminates expensive schema inference)
-                timeseries_schema = create_timeseries_schema()
+                # Use automatically detected schema for maximum performance (eliminates expensive schema inference)
+                timeseries_schema = detect_timeseries_schema(records)
                 
                 # Fast data cleaning with optimized type conversion
                 cleaned_records = clean_timeseries_records_fast(records)
                 
-                logger.debug(f"Using optimized schema with {len(timeseries_schema.fields)} fields")
+                logger.debug(f"Using auto-detected schema with {len(timeseries_schema.fields)} fields")
                 logger.debug(f"Processed {len(cleaned_records)} records with fast cleaning")
                 
                 # Create DataFrame with pre-defined schema for maximum performance

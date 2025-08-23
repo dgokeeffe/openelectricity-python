@@ -298,20 +298,18 @@ def infer_schema_from_data(data, sample_size: int = 100):
     return StructType(schema_fields)
 
 
-def create_timeseries_schema():
+def create_facility_timeseries_schema():
     """
-    Create a static, optimized Spark schema for timeseries data.
+    Create a static, optimized Spark schema for FACILITY timeseries data.
     
-    This eliminates the need for expensive schema inference while maintaining
-    perfect type alignment with the Pydantic models.
+    This schema is specifically designed for facility data which includes
+    facility-specific fields and DataMetric types.
     
     Returns:
-        PySpark StructType schema optimized for timeseries data
+        PySpark StructType schema optimized for facility timeseries data
     """
     from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
     
-    # Define schema based on the known timeseries structure
-    # This covers all possible fields from NetworkTimeSeries.to_records()
     schema_fields = [
         # Core time and grouping fields
         StructField('interval', TimestampType(), True),  # Network timezone datetime
@@ -322,21 +320,138 @@ def create_timeseries_schema():
         StructField('fueltech_id', StringType(), True),    # Fuel technology
         StructField('status_id', StringType(), True),      # Unit status
         
-        # Metric fields - all as DoubleType for numerical operations
+        # DataMetric fields (facility-specific)
         StructField('power', DoubleType(), True),          # Power generation
         StructField('energy', DoubleType(), True),         # Energy production
         StructField('market_value', DoubleType(), True),   # Market value
         StructField('emissions', DoubleType(), True),      # Emissions data
-        StructField('price', DoubleType(), True),          # Price data
-        StructField('demand', DoubleType(), True),         # Demand data
-        StructField('value', DoubleType(), True),          # Generic value field
+        StructField('renewable_proportion', DoubleType(), True), # Renewable proportion
         
-        # Additional metadata fields that might appear
+        # Additional metadata fields
         StructField('unit_capacity', DoubleType(), True),  # Unit capacity
         StructField('unit_efficiency', DoubleType(), True), # Unit efficiency
     ]
     
     return StructType(schema_fields)
+
+
+def create_market_timeseries_schema():
+    """
+    Create a static, optimized Spark schema for MARKET timeseries data.
+    
+    This schema is specifically designed for market data which includes
+    market-specific fields and MarketMetric types.
+    
+    Returns:
+        PySpark StructType schema optimized for market timeseries data
+    """
+    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
+    
+    schema_fields = [
+        # Core time and grouping fields
+        StructField('interval', TimestampType(), True),  # Network timezone datetime
+        StructField('network_id', StringType(), True),   # Network identifier
+        StructField('network_region', StringType(), True), # Region within network
+        
+        # MarketMetric fields (market-specific)
+        StructField('price', DoubleType(), True),         # Price data
+        StructField('demand', DoubleType(), True),        # Demand data
+        StructField('demand_energy', DoubleType(), True), # Demand energy
+        StructField('curtailment', DoubleType(), True),   # General curtailment
+        StructField('curtailment_energy', DoubleType(), True), # Curtailment energy
+        StructField('curtailment_solar', DoubleType(), True),  # Solar curtailment
+        StructField('curtailment_solar_energy', DoubleType(), True), # Solar curtailment energy
+        StructField('curtailment_wind', DoubleType(), True),   # Wind curtailment
+        StructField('curtailment_wind_energy', DoubleType(), True), # Wind curtailment energy
+        
+        # Additional metadata fields
+        StructField('primary_grouping', StringType(), True), # Primary grouping (fueltech, status, etc.)
+    ]
+    
+    return StructType(schema_fields)
+
+
+def create_network_timeseries_schema():
+    """
+    Create a static, optimized Spark schema for NETWORK timeseries data.
+    
+    This schema is specifically designed for network data which includes
+    network-wide aggregations and DataMetric types.
+    
+    Returns:
+        PySpark StructType schema optimized for network timeseries data
+    """
+    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
+    
+    schema_fields = [
+        # Core time and grouping fields
+        StructField('interval', TimestampType(), True),  # Network timezone datetime
+        StructField('network_id', StringType(), True),   # Network identifier
+        StructField('network_region', StringType(), True), # Region within network
+        
+        # DataMetric fields (network-wide)
+        StructField('power', DoubleType(), True),          # Network power
+        StructField('energy', DoubleType(), True),         # Network energy
+        StructField('market_value', DoubleType(), True),   # Network market value
+        StructField('emissions', DoubleType(), True),      # Network emissions
+        StructField('renewable_proportion', DoubleType(), True), # Network renewable proportion
+        
+        # Network grouping fields
+        StructField('primary_grouping', StringType(), True),   # Primary grouping (fueltech, status, etc.)
+        StructField('secondary_grouping', StringType(), True), # Secondary grouping
+    ]
+    
+    return StructType(schema_fields)
+
+
+# Legacy function for backward compatibility - now delegates to facility schema
+def create_timeseries_schema():
+    """
+    Create a static, optimized Spark schema for timeseries data.
+    
+    This function is maintained for backward compatibility but now
+    delegates to the facility-specific schema as that's most common.
+    
+    Returns:
+        PySpark StructType schema optimized for facility timeseries data
+    """
+    return create_facility_timeseries_schema()
+
+
+def detect_timeseries_schema(records: list[dict]) -> "StructType":
+    """
+    Automatically detect the appropriate Spark schema based on the data content.
+    
+    This function analyzes the records to determine whether they contain
+    facility, market, or network data and returns the appropriate schema.
+    
+    Args:
+        records: List of timeseries records
+        
+    Returns:
+        PySpark StructType schema appropriate for the data type
+    """
+    if not records:
+        return create_facility_timeseries_schema()  # Default fallback
+    
+    # Get all unique field names from the records
+    all_fields = set()
+    for record in records:
+        all_fields.update(record.keys())
+    
+    # Check for market-specific fields
+    market_fields = {'price', 'demand', 'demand_energy', 'curtailment', 
+                     'curtailment_energy', 'curtailment_solar', 'curtailment_wind'}
+    if market_fields.intersection(all_fields):
+        return create_market_timeseries_schema()
+    
+    # Check for network-specific fields
+    network_fields = {'primary_grouping', 'secondary_grouping'}
+    if network_fields.intersection(all_fields):
+        return create_network_timeseries_schema()
+    
+    # Default to facility schema (most common)
+    return create_facility_timeseries_schema()
 
 
 def create_timeseries_dataframe_batched(records: list[dict], spark_session, batch_size: int = 10000) -> "DataFrame":
@@ -360,7 +475,7 @@ def create_timeseries_dataframe_batched(records: list[dict], spark_session, batc
         return None
     
     # Get the optimized schema
-    schema = create_timeseries_schema()
+    schema = detect_timeseries_schema(records)
     
     # For small datasets, use the fast single-pass method
     if len(records) <= batch_size:
