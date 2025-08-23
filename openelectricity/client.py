@@ -95,6 +95,36 @@ class OEClient(BaseOEClient):
         self._session: requests.Session | None = None
         logger.debug("Initialized synchronous client")
 
+    def get_spark_session(self, app_name: str = "OpenElectricity") -> "SparkSession":
+        """
+        Get a Spark session that works in both Databricks and local environments.
+        
+        This method provides access to the centralized Spark session management
+        from the spark_utils module.
+        
+        Args:
+            app_name: Name for the Spark application
+            
+        Returns:
+            SparkSession: Configured Spark session
+            
+        Raises:
+            ImportError: If PySpark is not available
+            Exception: If unable to create Spark session
+        """
+        from openelectricity.spark_utils import get_spark_session
+        return get_spark_session(app_name)
+
+    def is_spark_available(self) -> bool:
+        """
+        Check if PySpark is available in the current environment.
+        
+        Returns:
+            bool: True if PySpark can be imported, False otherwise
+        """
+        from openelectricity.spark_utils import is_spark_available
+        return is_spark_available()
+
     def _ensure_session(self) -> requests.Session:
         """Ensure session is initialized and return it."""
         if self._session is None:

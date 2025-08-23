@@ -393,15 +393,45 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
             A PySpark DataFrame containing the time series data, or None if PySpark is not available
         """
         try:
-            from openelectricity.spark_utils import create_spark_dataframe
+            from openelectricity.spark_utils import get_spark_session
+            from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, VariantType
+            import logging
             
-            # Convert to records and then to PySpark DataFrame
+            logger = logging.getLogger(__name__)
+            
             records = self.to_records()
             if not records:
                 return None
-                
-            return create_spark_dataframe(records, spark_session=spark_session, app_name=app_name)
             
+            # Get or create Spark session
+            if spark_session is None:
+                spark_session = get_spark_session(app_name)
+            
+            # Use schema inference with variant type support for better performance
+            if records:
+                from openelectricity.spark_utils import infer_schema_from_data
+                
+                # Clean the records to ensure all datetime objects are converted to strings
+                cleaned_records = []
+                for record in records:
+                    cleaned_record = {}
+                    for key, value in record.items():
+                        if hasattr(value, 'isoformat'):  # Datetime objects
+                            cleaned_record[key] = str(value)
+                        elif value is None:
+                            cleaned_record[key] = None
+                        else:
+                            cleaned_record[key] = value
+                    cleaned_records.append(cleaned_record)
+                
+                timeseries_schema = infer_schema_from_data(cleaned_records, sample_size=50)
+                
+                logger.debug(f"Created inferred schema with {len(timeseries_schema.fields)} fields for PySpark DataFrame")
+                logger.debug(f"Inferred schema: {timeseries_schema}")
+                return spark_session.createDataFrame(cleaned_records, schema=timeseries_schema)
+            else:
+                return None
+                
         except ImportError:
             # Log warning but don't raise error to maintain compatibility
             import logging

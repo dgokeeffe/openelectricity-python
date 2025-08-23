@@ -146,3 +146,84 @@ def get_spark_version() -> Optional[str]:
         return pyspark.__version__
     except ImportError:
         return None
+
+
+def create_spark_dataframe_with_schema(data, schema, spark_session=None, app_name: str = "OpenElectricity"):
+    """
+    Create a PySpark DataFrame with explicit schema for better performance.
+    
+    Args:
+        data: List of dictionaries or similar data structure
+        schema: PySpark schema (StructType)
+        spark_session: Optional PySpark session. If not provided, will create one.
+        app_name: Name for the Spark application if creating a new session.
+        
+    Returns:
+        PySpark DataFrame with explicit schema
+    """
+    if spark_session is None:
+        spark_session = get_spark_session(app_name)
+    
+    return spark_session.createDataFrame(data, schema=schema)
+
+
+def infer_schema_from_data(data, sample_size: int = 100):
+    """
+    Infer PySpark schema from data with support for variant types.
+    
+    Args:
+        data: List of dictionaries or similar data structure
+        sample_size: Number of records to sample for schema inference
+        
+    Returns:
+        PySpark StructType schema
+    """
+    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, VariantType, BooleanType, IntegerType
+    
+    if not data:
+        return StructType()
+    
+    # Sample data for schema inference
+    sample_data = data[:min(sample_size, len(data))]
+    
+    # Analyze field types across the sample
+    field_types = {}
+    for record in sample_data:
+        for key, value in record.items():
+            if key not in field_types:
+                field_types[key] = set()
+            
+            if value is None:
+                field_types[key].add(type(None))
+            else:
+                field_types[key].add(type(value))
+    
+    # Create schema fields
+    schema_fields = []
+    for field_name, types in field_types.items():
+        # Remove None type for schema definition
+        types.discard(type(None))
+        
+        if not types:
+            # All values are None, default to StringType
+            schema_fields.append(StructField(field_name, StringType(), True))
+        elif len(types) == 1:
+            # Single type, use appropriate PySpark type
+            value_type = list(types)[0]
+            if value_type in (int, float):
+                schema_fields.append(StructField(field_name, DoubleType(), True))
+            elif value_type == str:
+                schema_fields.append(StructField(field_name, StringType(), True))
+            elif value_type == bool:
+                schema_fields.append(StructField(field_name, StringType(), True))  # Convert bools to strings
+            elif 'datetime' in str(value_type) or 'Timestamp' in str(value_type):
+                # Handle datetime/timestamp types
+                schema_fields.append(StructField(field_name, StringType(), True))  # Convert to string for safety
+            else:
+                # Use variant type only for truly complex or unknown types
+                schema_fields.append(StructField(field_name, VariantType(), True))
+        else:
+            # Multiple types, use variant type for flexibility
+            schema_fields.append(StructField(field_name, VariantType(), True))
+    
+    return StructType(schema_fields)
