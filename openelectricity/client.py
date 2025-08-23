@@ -57,7 +57,13 @@ class BaseOEClient:
     """
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
-        self.base_url = base_url.rstrip("/") if base_url else settings.base_url
+        # Ensure base_url has a trailing slash for aiohttp ClientSession
+        if base_url:
+            self.base_url = base_url.rstrip("/") + "/"
+        else:
+            self.base_url = settings.base_url
+            if not self.base_url.endswith("/"):
+                self.base_url += "/"
         self.api_key = api_key or settings.api_key
 
         if not self.api_key:
@@ -119,7 +125,10 @@ class OEClient(BaseOEClient):
 
     def _build_url(self, endpoint: str) -> str:
         """Build full URL from endpoint."""
-        return f"{self.base_url}/v4{endpoint}"
+        # Ensure endpoint starts with / and remove any double slashes
+        if not endpoint.startswith('/'):
+            endpoint = '/' + endpoint
+        return f"{self.base_url.rstrip('/')}/v4{endpoint}"
 
     def _clean_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """Remove None values from parameters."""
@@ -694,13 +703,15 @@ class AsyncOEClient(BaseOEClient):
         date_start: datetime | None = None,
         date_end: datetime | None = None,
         primary_grouping: DataPrimaryGrouping | None = None,
+        network_region: str | None = None,
     ) -> TimeSeriesResponse:
         """Get market data for specified metrics."""
         logger.debug(
-            "Getting market data for %s (metrics: %s, interval: %s)",
+            "Getting market data for %s (metrics: %s, interval: %s, region: %s)",
             network_code,
             metrics,
             interval,
+            network_region,
         )
         await self._ensure_client()
         params = {
@@ -709,6 +720,7 @@ class AsyncOEClient(BaseOEClient):
             "date_start": date_start.isoformat() if date_start else None,
             "date_end": date_end.isoformat() if date_end else None,
             "primary_grouping": primary_grouping,
+            "network_region": network_region,
         }
         # Remove None values
         params = {k: v for k, v in params.items() if v is not None}
