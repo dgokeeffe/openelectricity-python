@@ -167,6 +167,115 @@ def create_spark_dataframe_with_schema(data, schema, spark_session=None, app_nam
     return spark_session.createDataFrame(data, schema=schema)
 
 
+def pydantic_field_to_spark_type(field_info, field_name: str):
+    """
+    Map a Pydantic field to the appropriate Spark type.
+    
+    Args:
+        field_info: Pydantic field info from model fields
+        field_name: Name of the field
+        
+    Returns:
+        Appropriate PySpark data type
+    """
+    from pyspark.sql.types import StringType, DoubleType, IntegerType, BooleanType, TimestampType
+    from typing import get_origin, get_args
+    import datetime
+    from enum import Enum
+    
+    # Get the annotation (type) from the field
+    annotation = field_info.annotation
+    
+    # Handle Union types (like str | None)
+    origin = get_origin(annotation)
+    if origin is type(None) or origin is type(type(None)):
+        return StringType()
+    elif hasattr(annotation, '__origin__') and annotation.__origin__ is type(None):
+        return StringType()
+    elif origin is not None:
+        args = get_args(annotation)
+        # For Union types, get the non-None type
+        non_none_types = [arg for arg in args if arg is not type(None)]
+        if non_none_types:
+            annotation = non_none_types[0]
+    
+    # Map basic Python types
+    if annotation == str:
+        return StringType()
+    elif annotation == int:
+        return IntegerType()
+    elif annotation == float:
+        return DoubleType()
+    elif annotation == bool:
+        return BooleanType()
+    elif annotation == datetime.datetime or annotation is datetime.datetime:
+        return TimestampType()  # Store as timestamp with UTC conversion
+    
+    # Handle Enum types (including custom enums)
+    if hasattr(annotation, '__bases__') and any(issubclass(base, Enum) for base in annotation.__bases__):
+        return StringType()
+    
+    # Handle List types
+    if origin == list:
+        return StringType()  # Store lists as JSON strings for now
+    
+    # Default to string for unknown types
+    return StringType()
+
+
+def create_schema_from_pydantic_model(model_class, flattened: bool = False):
+    """
+    Create a Spark schema directly from a Pydantic model class.
+    
+    Args:
+        model_class: Pydantic model class
+        flattened: Whether this is for flattened data (like facilities with units)
+        
+    Returns:
+        PySpark StructType schema
+    """
+    from pyspark.sql.types import StructType, StructField
+    
+    schema_fields = []
+    
+    # Get model fields
+    for field_name, field_info in model_class.model_fields.items():
+        spark_type = pydantic_field_to_spark_type(field_info, field_name)
+        schema_fields.append(StructField(field_name, spark_type, True))  # Allow nulls
+    
+    return StructType(schema_fields)
+
+
+def create_facilities_flattened_schema():
+    """
+    Create a Spark schema for flattened facilities data (facility + unit fields).
+    
+    Returns:
+        PySpark StructType schema optimized for facilities with units
+    """
+    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, BooleanType, TimestampType
+    
+    # Define schema based on the flattened structure from facilities to_pyspark
+    # This includes fields from both Facility and FacilityUnit models
+    schema_fields = [
+        # Facility fields
+        StructField('code', StringType(), True),
+        StructField('name', StringType(), True), 
+        StructField('network_id', StringType(), True),
+        StructField('network_region', StringType(), True),
+        StructField('description', StringType(), True),
+        StructField('fueltech_id', StringType(), True),
+        StructField('status_id', StringType(), True),
+        StructField('capacity_registered', DoubleType(), True),  # Keep as number
+        StructField('emissions_factor_co2', DoubleType(), True),  # Keep as number
+        StructField('data_first_seen', TimestampType(), True),  # UTC timestamp
+        StructField('data_last_seen', TimestampType(), True),   # UTC timestamp
+        StructField('dispatch_type', StringType(), True),
+    ]
+    
+    return StructType(schema_fields)
+
+
 def infer_schema_from_data(data, sample_size: int = 100):
     """
     Infer PySpark schema from data with support for variant types.
@@ -215,15 +324,15 @@ def infer_schema_from_data(data, sample_size: int = 100):
             elif value_type == str:
                 schema_fields.append(StructField(field_name, StringType(), True))
             elif value_type == bool:
-                schema_fields.append(StructField(field_name, StringType(), True))  # Convert bools to strings
+                schema_fields.append(StructField(field_name, BooleanType(), True))
             elif 'datetime' in str(value_type) or 'Timestamp' in str(value_type):
-                # Handle datetime/timestamp types
-                schema_fields.append(StructField(field_name, StringType(), True))  # Convert to string for safety
+                # Handle datetime/timestamp types - store as TimestampType with UTC conversion
+                schema_fields.append(StructField(field_name, TimestampType(), True))
             else:
-                # Use variant type only for truly complex or unknown types
-                schema_fields.append(StructField(field_name, VariantType(), True))
+                # Use string type for safety
+                schema_fields.append(StructField(field_name, StringType(), True))
         else:
-            # Multiple types, use variant type for flexibility
-            schema_fields.append(StructField(field_name, VariantType(), True))
+            # Multiple types, use string type for compatibility
+            schema_fields.append(StructField(field_name, StringType(), True))
     
     return StructType(schema_fields)

@@ -5,11 +5,44 @@ This module contains models related to facility data and responses.
 """
 
 from datetime import datetime
+import datetime as dt
 
 from pydantic import BaseModel, Field
 
 from openelectricity.models.base import APIResponse
 from openelectricity.types import NetworkCode, UnitFueltechType, UnitStatusType
+
+
+def convert_field_value(key: str, value):
+    """
+    Convert field values with appropriate types for Spark compatibility.
+    
+    Args:
+        key: Field name to help determine appropriate conversion
+        value: Field value to convert
+        
+    Returns:
+        Converted value optimized for Spark
+    """
+    if value is None:
+        return None
+    elif hasattr(value, 'value'):  # Enum objects
+        return str(value)
+    elif hasattr(value, 'isoformat'):  # Datetime objects
+        # Convert timezone-aware datetime to UTC for TimestampType compatibility
+        if hasattr(value, 'tzinfo') and value.tzinfo is not None:
+            # Convert timezone-aware datetime to UTC
+            return value.astimezone(dt.timezone.utc).replace(tzinfo=None)
+        else:
+            return value  # Already naive datetime, assume UTC
+    elif isinstance(value, bool):
+        return value  # Keep booleans
+    elif isinstance(value, (int, float)) and key in ['capacity_registered', 'emissions_factor_co2']:
+        return float(value)  # Keep numeric fields as numbers
+    elif isinstance(value, (int, float)):
+        return value  # Keep other numbers as-is
+    else:
+        return str(value)  # Convert everything else to string for safety
 
 
 class FacilityUnit(BaseModel):
@@ -85,32 +118,14 @@ class FacilityResponse(APIResponse[Facility]):
                                 # Create combined record
                                 record = {}
                                 
-                                # Add facility fields (excluding units)
+                                # Add facility fields (excluding units) with proper type preservation
                                 for key, value in facility_dict.items():
                                     if key != 'units':
-                                        # Convert to basic Python types for PySpark compatibility
-                                        if hasattr(value, 'value'):  # Enum
-                                            record[key] = str(value)
-                                        elif hasattr(value, 'timestamp'):  # Datetime objects
-                                            # Convert to microseconds for optimal PySpark performance
-                                            record[key] = int(value.timestamp() * 1_000_000)
-                                        elif value is None:
-                                            record[key] = None
-                                        else:
-                                            record[key] = str(value)  # Convert everything else to string for safety
+                                        record[key] = convert_field_value(key, value)
                                 
-                                # Add unit fields
+                                # Add unit fields with proper type preservation
                                 for key, value in unit.items():
-                                    # Convert to basic Python types for PySpark compatibility
-                                    if hasattr(value, 'value'):  # Enum
-                                        record[key] = str(value)
-                                    elif hasattr(value, 'timestamp'):  # Datetime objects
-                                        # Convert to microseconds for optimal PySpark performance
-                                        record[key] = int(value.timestamp() * 1_000_000)
-                                    elif value is None:
-                                        record[key] = None
-                                    else:
-                                        record[key] = str(value)  # Convert everything else to string for safety
+                                    record[key] = convert_field_value(key, value)
                                 
                                 records.append(record)
                                 
@@ -122,15 +137,7 @@ class FacilityResponse(APIResponse[Facility]):
                         record = {}
                         for key, value in facility_dict.items():
                             if key != 'units':
-                                # Convert to basic Python types for PySpark compatibility
-                                if hasattr(value, 'value'):  # Enum
-                                    record[key] = str(value)
-                                elif hasattr(value, 'isoformat'):  # Datetime objects
-                                    record[key] = str(value)
-                                elif value is None:
-                                    record[key] = None
-                                else:
-                                    record[key] = str(value)  # Convert everything else to string for safety
+                                record[key] = convert_field_value(key, value)
                         records.append(record)
                         
                 except Exception as facility_error:
@@ -143,21 +150,21 @@ class FacilityResponse(APIResponse[Facility]):
                 logger.debug(f"First record keys: {list(records[0].keys())}")
                 logger.debug(f"First record sample: {str(records[0])[:200]}...")
             
-            # Try to create DataFrame using explicit schema for better performance
+            # Try to create DataFrame using predefined schema optimized for facilities
             try:
                 if spark_session is None:
                     from openelectricity.spark_utils import get_spark_session
                     spark_session = get_spark_session(app_name)
                 
-                # Use schema inference with variant type support for better performance
-                from openelectricity.spark_utils import infer_schema_from_data
+                # Use predefined schema aligned with Pydantic models for better performance
+                from openelectricity.spark_utils import create_facilities_flattened_schema
                 
-                facilities_schema = infer_schema_from_data(records, sample_size=50)
+                facilities_schema = create_facilities_flattened_schema()
                 
-                logger.debug(f"Attempting to create PySpark DataFrame with {len(records)} records using inferred schema")
-                logger.debug(f"Inferred schema: {facilities_schema}")
+                logger.debug(f"Creating PySpark DataFrame with {len(records)} records using predefined schema")
+                logger.debug(f"Schema aligned with Pydantic models: {facilities_schema}")
                 
-                # Create DataFrame with explicit schema
+                # Create DataFrame with predefined schema
                 df = spark_session.createDataFrame(records, schema=facilities_schema)
                 logger.debug(f"Successfully created PySpark DataFrame with {len(records)} records")
                 return df

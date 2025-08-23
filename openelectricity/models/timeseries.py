@@ -7,6 +7,7 @@ This module contains models for time series data responses.
 import re
 from collections.abc import Sequence
 from datetime import datetime, timedelta
+import datetime as dt
 from typing import Any
 
 import warnings
@@ -407,27 +408,38 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
             if spark_session is None:
                 spark_session = get_spark_session(app_name)
             
-            # Use schema inference with variant type support for better performance
+            # Create schema directly from Pydantic model for better alignment
             if records:
                 from openelectricity.spark_utils import infer_schema_from_data
                 
-                # Clean the records to ensure all datetime objects are converted to strings
+                # Clean the records to ensure proper type conversion
                 cleaned_records = []
                 for record in records:
                     cleaned_record = {}
                     for key, value in record.items():
                         if hasattr(value, 'isoformat'):  # Datetime objects
+                            # Convert timezone-aware datetime to UTC for TimestampType compatibility
+                            if hasattr(value, 'tzinfo') and value.tzinfo is not None:
+                                cleaned_record[key] = value.astimezone(dt.timezone.utc).replace(tzinfo=None)
+                            else:
+                                cleaned_record[key] = value  # Already naive datetime, assume UTC
+                        elif hasattr(value, 'value'):  # Enum objects
                             cleaned_record[key] = str(value)
+                        elif isinstance(value, bool):
+                            cleaned_record[key] = value  # Keep booleans as booleans
+                        elif isinstance(value, (int, float)):
+                            cleaned_record[key] = float(value) if isinstance(value, int) and key in ['price', 'demand', 'value'] else value
                         elif value is None:
                             cleaned_record[key] = None
                         else:
                             cleaned_record[key] = value
                     cleaned_records.append(cleaned_record)
                 
+                # Use improved schema inference that handles types better
                 timeseries_schema = infer_schema_from_data(cleaned_records, sample_size=50)
                 
-                logger.debug(f"Created inferred schema with {len(timeseries_schema.fields)} fields for PySpark DataFrame")
-                logger.debug(f"Inferred schema: {timeseries_schema}")
+                logger.debug(f"Created schema with {len(timeseries_schema.fields)} fields aligned with timeseries data")
+                logger.debug(f"Schema: {timeseries_schema}")
                 return spark_session.createDataFrame(cleaned_records, schema=timeseries_schema)
             else:
                 return None
