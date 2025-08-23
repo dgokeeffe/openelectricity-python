@@ -406,7 +406,7 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
             
             # Get or create Spark session
             if spark_session is None:
-                spark_session = get_spark_session(app_name)
+                spark_session = get_spark_session()
             
             # Create schema directly from Pydantic model for better alignment
             if records:

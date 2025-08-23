@@ -154,7 +154,7 @@ class FacilityResponse(APIResponse[Facility]):
             try:
                 if spark_session is None:
                     from openelectricity.spark_utils import get_spark_session
-                    spark_session = get_spark_session(app_name)
+                    spark_session = get_spark_session()
                 
                 # Use predefined schema aligned with Pydantic models for better performance
                 from openelectricity.spark_utils import create_facilities_flattened_schema
