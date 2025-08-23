@@ -38,6 +38,8 @@ async def test_market_metric_combinations():
         MarketMetric.PRICE,
         MarketMetric.DEMAND,
         MarketMetric.DEMAND_ENERGY,
+        MarketMetric.CURTAILMENT_SOLAR,
+        MarketMetric.CURTAILMENT_WIND,
     ]
     
     print("🔍 Testing individual market metrics...")
