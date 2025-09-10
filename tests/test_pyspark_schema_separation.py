@@ -6,10 +6,10 @@ This test validates that the automatic schema detection works correctly
 for different data types: facility, market, and network data.
 """
 
-import os
 import logging
+from datetime import datetime, timedelta
+
 import pytest
-from datetime import datetime, timedelta, timezone
 
 # Check if PySpark is available
 try:
@@ -18,7 +18,6 @@ try:
 except ImportError:
     PYSPARK_AVAILABLE = False
 
-from openelectricity import OEClient
 from openelectricity.types import DataMetric, MarketMetric
 
 # Configure logging to be quiet during tests
@@ -323,7 +322,7 @@ class TestPySparkSchemaSeparation:
 
         # Should have some fields
         assert len(schema_fields) > 0, "Schema should have fields"
-        
+
         # Should have essential fields (flexible - at least some should be present)
         essential_fields = ["interval", "network_region", "facility_code"]
         found_essential = [field for field in essential_fields if field in field_names]

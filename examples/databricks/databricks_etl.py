@@ -29,12 +29,11 @@ Usage:
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any, Union
 
 # Optional PySpark imports
 try:
-    from pyspark.sql import SparkSession, DataFrame
-    from pyspark.sql.functions import col, when, lit
+    from pyspark.sql import DataFrame, SparkSession
+    from pyspark.sql.functions import col, lit, when
     PYSPARK_AVAILABLE = True
 except ImportError:
     SparkSession = None
@@ -45,15 +44,7 @@ except ImportError:
     PYSPARK_AVAILABLE = False
 
 from openelectricity import OEClient
-from openelectricity.types import (
-    DataMetric, 
-    MarketMetric, 
-    DataInterval, 
-    NetworkCode,
-    DataPrimaryGrouping,
-    DataSecondaryGrouping
-)
-
+from openelectricity.types import DataInterval, DataMetric, DataPrimaryGrouping, DataSecondaryGrouping, MarketMetric, NetworkCode
 
 # Configure logging for Databricks
 logger = logging.getLogger(__name__)
@@ -83,14 +74,14 @@ def _get_api_key_from_secrets(secret_scope: str = "daveok", secret_key: str = "o
     """
     try:
         from databricks.sdk import WorkspaceClient
-        
+
         w = WorkspaceClient()
         dbutils = w.dbutils
-        
+
         api_key = dbutils.secrets.get(secret_scope, secret_key)
         logger.info(f"Successfully retrieved API key from secret scope '{secret_scope}'")
         return api_key
-        
+
     except ImportError:
         logger.error("Databricks SDK not available. Please ensure you're running in a Databricks environment.")
         raise
@@ -99,7 +90,7 @@ def _get_api_key_from_secrets(secret_scope: str = "daveok", secret_key: str = "o
         raise
 
 
-def _get_client(api_key: Optional[str] = None, base_url: Optional[str] = None, 
+def _get_client(api_key: str | None = None, base_url: str | None = None,
                 secret_scope: str = "daveok", secret_key: str = "openelectricity_api_key") -> OEClient:
     """
     Create and return an OpenNEM client instance.
@@ -115,7 +106,7 @@ def _get_client(api_key: Optional[str] = None, base_url: Optional[str] = None,
     """
     if api_key is None:
         api_key = _get_api_key_from_secrets(secret_scope, secret_key)
-    
+
     return OEClient(api_key=api_key, base_url=base_url)
 
 
@@ -134,7 +125,7 @@ def _get_spark():
         return SparkSession.builder.getOrCreate()
 
 
-def _calculate_date_range(days_back: int, end_date: Optional[datetime] = None) -> tuple[datetime, datetime]:
+def _calculate_date_range(days_back: int, end_date: datetime | None = None) -> tuple[datetime, datetime]:
     """
     Calculate start and end dates for data fetching.
     
@@ -147,7 +138,7 @@ def _calculate_date_range(days_back: int, end_date: Optional[datetime] = None) -
     """
     if end_date is None:
         end_date = datetime.now()
-    
+
     start_date = end_date - timedelta(days=days_back)
     return start_date, end_date
 
@@ -156,9 +147,9 @@ def get_market_data(
     network: NetworkCode,
     interval: DataInterval,
     days_back: int = 1,
-    end_date: Optional[datetime] = None,
+    end_date: datetime | None = None,
     primary_grouping: DataPrimaryGrouping = "network_region",
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     secret_scope: str = "daveok",
     secret_key: str = "openelectricity_api_key"
 ) -> DataFrame:
@@ -195,11 +186,11 @@ def get_market_data(
         ['interval', 'price_dollar_MWh', 'demand_MW', 'demand_energy_MWh', ...]
     """
     start_date, end_date = _calculate_date_range(days_back, end_date)
-    
+
     try:
         with _get_client(api_key, None, secret_scope, secret_key) as client:
             logger.info(f"Fetching market data for {network} network ({interval} intervals)")
-            
+
             response = client.get_market(
                 network_code=network,
                 metrics=[
@@ -212,22 +203,22 @@ def get_market_data(
                 date_end=end_date,
                 primary_grouping=primary_grouping,
             )
-            
+
             # Convert to Spark DataFrame using native to_pandas method
             pd_df = response.to_pandas()
             units = response.get_metric_units()
             spark = _get_spark()
             spark_df = spark.createDataFrame(pd_df)
-            
+
             # Rename columns to be more descriptive using PySpark operations
             spark_df = spark_df.withColumnRenamed('price', 'price_dollar_MWh')
             spark_df = spark_df.withColumnRenamed('demand', 'demand_MW')
             spark_df = spark_df.withColumnRenamed('demand_energy', 'demand_energy_GWh')
-            
-            
-            logger.info(f"Successfully fetched market data records")
+
+
+            logger.info("Successfully fetched market data records")
             return spark_df
-            
+
     except Exception as e:
         logger.error(f"Failed to fetch market data for {network}: {str(e)}")
         raise
@@ -237,11 +228,11 @@ def get_network_data(
     network: NetworkCode,
     interval: DataInterval,
     days_back: int = 1,
-    end_date: Optional[datetime] = None,
+    end_date: datetime | None = None,
     primary_grouping: DataPrimaryGrouping = "network_region",
     secondary_grouping: DataSecondaryGrouping = "fueltech_group",
-    api_key: Optional[str] = None
-) -> Optional[DataFrame]:
+    api_key: str | None = None
+) -> DataFrame | None:
     """
     Fetch network data (power, energy, market value, emissions) from OpenNEM API.
     
@@ -270,13 +261,13 @@ def get_network_data(
         raise ImportError(
             "PySpark is required for get_network_data. Install it with: uv add 'openelectricity[analysis]'"
         )
-    
+
     start_date, end_date = _calculate_date_range(days_back, end_date)
-    
+
     try:
         with _get_client(api_key) as client:
             logger.info(f"Fetching network data for {network} network ({interval} intervals)")
-            
+
             response = client.get_network_data(
                 network_code=network,
                 metrics=[
@@ -291,31 +282,31 @@ def get_network_data(
                 primary_grouping=primary_grouping,
                 secondary_grouping=secondary_grouping,
             )
-            
+
             # Convert to Spark DataFrame using native to_pandas method
             pd_df = response.to_pandas()
             units = response.get_metric_units()
             spark = _get_spark()
             spark_df = spark.createDataFrame(pd_df)
-            
+
             # Rename columns using PySpark operations
             power_unit = units.get("power", "")
             energy_unit = units.get("energy", "")
             emissions_unit = units.get("emissions", "")
-            
+
             if power_unit:
                 spark_df = spark_df.withColumnRenamed('power', f'power_{power_unit}')
             if energy_unit:
                 spark_df = spark_df.withColumnRenamed('energy', f'energy_{energy_unit}')
             if emissions_unit:
                 spark_df = spark_df.withColumnRenamed('emissions', f'emissions_{emissions_unit}')
-            
+
             # Always rename market_value
             spark_df = spark_df.withColumnRenamed('market_value', 'market_value_aud')
-            
-            logger.info(f"Successfully fetched network data records")
+
+            logger.info("Successfully fetched network data records")
             return spark_df
-            
+
     except Exception as e:
         logger.error(f"Failed to fetch network data for {network}: {str(e)}")
         raise
@@ -323,12 +314,12 @@ def get_network_data(
 
 def get_facility_data(
     network: NetworkCode,
-    facility_codes: Union[str, List[str]],
+    facility_codes: str | list[str],
     interval: DataInterval,
     days_back: int = 7,
-    end_date: Optional[datetime] = None,
-    api_key: Optional[str] = None
-) -> Dict[str, Optional[DataFrame]]:
+    end_date: datetime | None = None,
+    api_key: str | None = None
+) -> dict[str, DataFrame | None]:
     """
     Fetch facility data for one or more facilities from OpenNEM API.
     
@@ -359,23 +350,23 @@ def get_facility_data(
         raise ImportError(
             "PySpark is required for get_facility_data. Install it with: uv add 'openelectricity[analysis]'"
         )
-    
+
     start_date, end_date = _calculate_date_range(days_back, end_date)
-    
+
     # Normalize facility codes to list
     if isinstance(facility_codes, str):
         facility_codes = [facility_codes]
-    
+
     facility_dataframes = {}
-    
+
     try:
         with _get_client(api_key) as client:
             logger.info(f"Fetching facility data for {len(facility_codes)} facilities")
-            
+
             for facility_code in facility_codes:
                 try:
                     logger.info(f"Fetching data for facility: {facility_code}")
-                    
+
                     response = client.get_facility_data(
                         network_code=network,
                         facility_code=facility_code,
@@ -389,49 +380,49 @@ def get_facility_data(
                         date_start=start_date,
                         date_end=end_date,
                     )
-                    
+
                     # Convert to Spark DataFrame using native to_spark method
                     pd_df = response.to_pandas()
                     units = response.get_metric_units()
                     spark = _get_spark()
                     spark_df = spark.createDataFrame(pd_df)
-                    
+
                     # Rename columns using PySpark operations
                     power_unit = units.get("power", "")
                     energy_unit = units.get("energy", "")
                     emissions_unit = units.get("emissions", "")
-                    
+
                     if power_unit:
                         spark_df = spark_df.withColumnRenamed('power', f'power_{power_unit}')
                     if energy_unit:
                         spark_df = spark_df.withColumnRenamed('energy', f'energy_{energy_unit}')
                     if emissions_unit:
                         spark_df = spark_df.withColumnRenamed('emissions', f'emissions_{emissions_unit}')
-                    
+
                     # Always rename market_value
                     spark_df = spark_df.withColumnRenamed('market_value', 'market_value_aud')
-                    
+
                     # Add facility identifier using PySpark operations
                     spark_df = spark_df.withColumn("facility_code", lit(facility_code))
-                    
+
                     facility_dataframes[facility_code] = spark_df
                     logger.info(f"Successfully fetched records for {facility_code}")
-                    
+
                 except Exception as e:
                     logger.warning(f"Failed to fetch data for facility {facility_code}: {str(e)}")
                     continue
-            
+
             successful_count = len(facility_dataframes)
             logger.info(f"Successfully fetched data for {successful_count}/{len(facility_codes)} facilities")
-            
+
             return facility_dataframes
-            
+
     except Exception as e:
         logger.error(f"Failed to initialize facility data fetch: {str(e)}")
         raise
 
 
-def get_facilities_metadata(api_key: Optional[str] = None) -> DataFrame:
+def get_facilities_metadata(api_key: str | None = None) -> DataFrame:
     """
     Fetch facilities metadata (dimension table) from OpenNEM API.
     
@@ -453,15 +444,15 @@ def get_facilities_metadata(api_key: Optional[str] = None) -> DataFrame:
     try:
         with _get_client(api_key) as client:
             logger.info("Fetching facilities metadata")
-            
+
             response = client.get_facilities()
             pd_df = response.to_pandas()
             spark = _get_spark()
             spark_df = spark.createDataFrame(pd_df)
-            
-            logger.info(f"Successfully fetched facilities metadata")
+
+            logger.info("Successfully fetched facilities metadata")
             return spark_df
-            
+
     except Exception as e:
         logger.error(f"Failed to fetch facilities metadata: {str(e)}")
         raise
@@ -529,18 +520,18 @@ def save_to_table(
     options["readChangeFeed"] = "true"
     options["compression"] = "zstd"
     options["delta.columnMapping.mode"] = "name"
-    
+
     full_table_name = f"{catalog}.{schema}.{table_name}"
-    
+
     try:
         # Build write operation with proper Spark syntax
         writer = df.write.mode(mode).options(**options)
-        
+
         # Save to table
         writer.saveAsTable(full_table_name)
-        
+
         logger.info(f"Successfully saved records to {full_table_name}")
-        
+
     except Exception as e:
         logger.error(f"Failed to save data to {full_table_name}: {str(e)}")
         raise

@@ -2,7 +2,7 @@
 
 import io
 import urllib.request
-from typing import Optional, Tuple
+from typing import Optional
 
 # Optional imports - will be None if not available
 try:
@@ -121,12 +121,12 @@ def set_openelectricity_style():
         raise ImportError(
             "Matplotlib is required for chart styling. Install it with: uv add 'openelectricity[analysis]'"
         )
-    
+
     if not SEABORN_AVAILABLE:
         raise ImportError(
             "Seaborn is required for chart styling. Install it with: uv add 'openelectricity[analysis]'"
         )
-    
+
     # Set seaborn style first
     sns.set_style("whitegrid", CHART_STYLE)
 
@@ -195,7 +195,7 @@ def download_logo() -> Optional["Image.Image"]:
         return None
 
 
-def add_watermark(ax: "Axes", position: Tuple[float, float] = (0.98, 0.02), size: float = 0.15, alpha: float = 0.2) -> None:
+def add_watermark(ax: "Axes", position: tuple[float, float] = (0.98, 0.02), size: float = 0.15, alpha: float = 0.2) -> None:
     """
     Add OpenElectricity logo watermark to a matplotlib axes.
 
@@ -208,7 +208,7 @@ def add_watermark(ax: "Axes", position: Tuple[float, float] = (0.98, 0.02), size
     if not MATPLOTLIB_AVAILABLE:
         print("Warning: Matplotlib not available. Cannot add watermark.")
         return
-    
+
     logo = download_logo()
     if logo is None:
         return
@@ -250,11 +250,11 @@ def add_watermark(ax: "Axes", position: Tuple[float, float] = (0.98, 0.02), size
 
 def format_chart(
     ax: "Axes",
-    title: Optional[str] = None,
-    xlabel: Optional[str] = None,
-    ylabel: Optional[str] = None,
+    title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
     add_logo: bool = True,
-    logo_position: Tuple[float, float] = (0.98, 0.02),
+    logo_position: tuple[float, float] = (0.98, 0.02),
     logo_size: float = 0.15,
     logo_alpha: float = 0.2,
 ) -> None:
@@ -293,7 +293,7 @@ def format_chart(
         add_watermark(ax, position=logo_position, size=logo_size, alpha=logo_alpha)
 
 
-def create_styled_figure(figsize: Tuple[float, float] = (12, 6), dpi: int = 100) -> Tuple["Figure", "Axes"]:
+def create_styled_figure(figsize: tuple[float, float] = (12, 6), dpi: int = 100) -> tuple["Figure", "Axes"]:
     """
     Create a figure with OpenElectricity styling.
 
@@ -308,7 +308,7 @@ def create_styled_figure(figsize: Tuple[float, float] = (12, 6), dpi: int = 100)
         raise ImportError(
             "Matplotlib is required for creating styled figures. Install it with: uv add 'openelectricity[analysis]'"
         )
-    
+
     set_openelectricity_style()
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
     fig.patch.set_facecolor(BRAND_COLORS["background"])

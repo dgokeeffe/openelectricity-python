@@ -4,6 +4,7 @@ Test script to examine timezone handling in PySpark conversion.
 """
 
 import os
+
 import pytest
 from dotenv import load_dotenv
 
@@ -37,8 +38,9 @@ def test_timezone_handling():
     print("\n📊 Fetching market data...")
     try:
         # Get market data
-        from openelectricity.types import MarketMetric
         from datetime import datetime, timedelta
+
+        from openelectricity.types import MarketMetric
 
         # Get just a few hours of data
         end_time = datetime.now()
@@ -100,8 +102,8 @@ def test_timezone_handling():
 
                 # Test if we can parse these back to datetime with timezone
                 print("\n🔄 Testing timezone parsing from PySpark strings...")
-                from datetime import datetime
                 import re
+                from datetime import datetime
 
                 sample_interval = interval_values[0]["interval"]
                 print(f"Sample interval string: {sample_interval}")

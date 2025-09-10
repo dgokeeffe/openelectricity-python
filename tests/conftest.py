@@ -6,7 +6,6 @@ This module provides common fixtures and configuration for all tests.
 
 import os
 from pathlib import Path
-from typing import Optional
 
 import pytest
 from dotenv import load_dotenv
@@ -17,7 +16,7 @@ def load_env_file() -> None:
     # Get the project root directory (parent of tests directory)
     project_root = Path(__file__).parent.parent
     env_file = project_root / ".env"
-    
+
     if env_file.exists():
         load_dotenv(env_file)
     else:
@@ -26,7 +25,7 @@ def load_env_file() -> None:
 
 
 @pytest.fixture(scope="session")
-def openelectricity_api_key() -> Optional[str]:
+def openelectricity_api_key() -> str | None:
     """
     Fixture to provide the OpenElectricity API key.
     
@@ -40,13 +39,13 @@ def openelectricity_api_key() -> Optional[str]:
     """
     # Load environment variables from .env file
     load_env_file()
-    
+
     # Get API key from environment
     api_key = os.getenv("OPENELECTRICITY_API_KEY")
-    
+
     if not api_key:
         pytest.skip("OPENELECTRICITY_API_KEY not found in environment or .env file")
-    
+
     return api_key
 
 
@@ -62,42 +61,42 @@ def openelectricity_client():
         OEClient: Configured client instance
     """
     from openelectricity import OEClient
-    
+
     # Load environment variables from .env file
     load_env_file()
-    
+
     # Get API key from environment
     api_key = os.getenv("OPENELECTRICITY_API_KEY")
-    
+
     if not api_key:
         pytest.skip("OPENELECTRICITY_API_KEY not found in environment or .env file")
-    
+
     return OEClient(api_key=api_key)
 
 
 @pytest.fixture(scope="session")
 def openelectricity_async_client():
     """
-    Fixture to provide an AsyncOEClient instance with API key.
+    Fixture to provide an OEClient instance configured for async usage.
     
-    Automatically loads API key from .env file and creates an async client.
+    Automatically loads API key from .env file and creates a client.
     Skips tests if API key is not available.
     
     Returns:
-        AsyncOEClient: Configured async client instance
+        OEClient: Configured client instance for async usage
     """
-    from openelectricity import AsyncOEClient
-    
+    from openelectricity import OEClient
+
     # Load environment variables from .env file
     load_env_file()
-    
+
     # Get API key from environment
     api_key = os.getenv("OPENELECTRICITY_API_KEY")
-    
+
     if not api_key:
         pytest.skip("OPENELECTRICITY_API_KEY not found in environment or .env file")
-    
-    return AsyncOEClient(api_key=api_key)
+
+    return OEClient(api_key=api_key)
 
 
 @pytest.fixture(autouse=True)
@@ -128,9 +127,9 @@ def pytest_configure(config):
 Pytest configuration and shared fixtures for the OpenElectricity test suite.
 """
 
-import pytest
-import os
 from unittest.mock import Mock
+
+import pytest
 
 
 @pytest.fixture(scope="session")

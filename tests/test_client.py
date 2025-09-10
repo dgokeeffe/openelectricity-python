@@ -6,7 +6,7 @@ This module contains tests for both synchronous and asynchronous clients.
 
 import pytest
 
-from openelectricity import AsyncOEClient, OEClient
+from openelectricity import OEClient
 from openelectricity.models.facilities import Facility, FacilityResponse
 from openelectricity.types import UnitFueltechType, UnitStatusType
 
@@ -80,12 +80,11 @@ def test_facility_response_parsing(facility_response):
 
 
 @pytest.mark.asyncio
-async def test_async_get_facilities(openelectricity_async_client):
+async def test_async_get_facilities():
     """Test getting facilities with async client."""
-    client = openelectricity_async_client
-    try:
+    async with OEClient() as client:
         try:
-            facilities = await client.get_facilities(
+            facilities = await client.get_facilities_async(
                 network_id=["NEM"],
                 status_id=[UnitStatusType.OPERATING],
                 fueltech_id=[UnitFueltechType.COAL_BLACK],
@@ -102,9 +101,6 @@ async def test_async_get_facilities(openelectricity_async_client):
         except Exception as e:
             # If API call fails, skip the test
             pytest.skip(f"API call failed: {e}")
-
-    finally:
-        await client.close()
 
 
 def test_sync_get_facilities(openelectricity_client):

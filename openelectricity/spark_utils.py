@@ -13,7 +13,6 @@ Key Features:
 """
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,7 @@ def get_spark_session() -> "SparkSession":
         from pyspark.sql import SparkSession
         return SparkSession.builder.getOrCreate()
 
-def create_spark_dataframe(data, schema=None, spark_session=None) -> "Optional[DataFrame]":
+def create_spark_dataframe(data, schema=None, spark_session=None) -> "DataFrame | None":
     """
     Create a PySpark DataFrame from data with automatic Spark session management.
     
@@ -51,17 +50,17 @@ def create_spark_dataframe(data, schema=None, spark_session=None) -> "Optional[D
     """
     try:
         from pyspark.sql import DataFrame
-        
+
         # Use provided session or create new one
         if spark_session is None:
             spark_session = get_spark_session()
-        
+
         # Create DataFrame
         if schema:
             return spark_session.createDataFrame(data, schema)
         else:
             return spark_session.createDataFrame(data)
-            
+
     except ImportError:
         logger.warning("PySpark not available. Install with: uv add 'openelectricity[analysis]'")
         return None
@@ -90,7 +89,7 @@ def is_spark_available() -> bool:
         return False
 
 
-def get_spark_version() -> Optional[str]:
+def get_spark_version() -> str | None:
     """
     Get the version of PySpark if available.
     
@@ -123,7 +122,7 @@ def create_spark_dataframe_with_schema(data, schema, spark_session=None):
     """
     if spark_session is None:
         spark_session = get_spark_session()
-    
+
     return spark_session.createDataFrame(data, schema=schema)
 
 
@@ -138,14 +137,15 @@ def pydantic_field_to_spark_type(field_info, field_name: str):
     Returns:
         Appropriate PySpark data type
     """
-    from pyspark.sql.types import StringType, DoubleType, IntegerType, BooleanType, TimestampType
-    from typing import get_origin, get_args
     import datetime
     from enum import Enum
-    
+    from typing import get_args, get_origin
+
+    from pyspark.sql.types import BooleanType, DoubleType, IntegerType, StringType, TimestampType
+
     # Get the annotation (type) from the field
     annotation = field_info.annotation
-    
+
     # Handle Union types (like str | None)
     origin = get_origin(annotation)
     if origin is type(None) or origin is type(type(None)):
@@ -158,7 +158,7 @@ def pydantic_field_to_spark_type(field_info, field_name: str):
         non_none_types = [arg for arg in args if arg is not type(None)]
         if non_none_types:
             annotation = non_none_types[0]
-    
+
     # Map basic Python types
     if annotation == str:
         return StringType()
@@ -170,15 +170,15 @@ def pydantic_field_to_spark_type(field_info, field_name: str):
         return BooleanType()
     elif annotation == datetime.datetime or annotation is datetime.datetime:
         return TimestampType()  # Store as timestamp with UTC conversion
-    
+
     # Handle Enum types (including custom enums)
     if hasattr(annotation, '__bases__') and any(issubclass(base, Enum) for base in annotation.__bases__):
         return StringType()
-    
+
     # Handle List types
     if origin == list:
         return StringType()  # Store lists as JSON strings for now
-    
+
     # Default to string for unknown types
     return StringType()
 
@@ -194,15 +194,15 @@ def create_schema_from_pydantic_model(model_class, flattened: bool = False):
     Returns:
         PySpark StructType schema
     """
-    from pyspark.sql.types import StructType, StructField
-    
+    from pyspark.sql.types import StructField, StructType
+
     schema_fields = []
-    
+
     # Get model fields
     for field_name, field_info in model_class.model_fields.items():
         spark_type = pydantic_field_to_spark_type(field_info, field_name)
         schema_fields.append(StructField(field_name, spark_type, True))  # Allow nulls
-    
+
     return StructType(schema_fields)
 
 
@@ -210,29 +210,34 @@ def create_facilities_flattened_schema():
     """
     Create a Spark schema for flattened facilities data (facility + unit fields).
     
+    This schema matches the output of FacilityResponse.to_records() method.
+    
     Returns:
         PySpark StructType schema optimized for facilities with units
     """
-    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, BooleanType, TimestampType
-    
-    # Define schema based on the flattened structure from facilities to_pyspark
-    # This includes fields from both Facility and FacilityUnit models
+    from pyspark.sql.types import DoubleType, StringType, StructField, StructType, TimestampType
+
+    # Define schema based on the to_records() output structure
+    # This matches the flattened structure: facility_code, facility_name, unit_code, etc.
     schema_fields = [
-        # Facility fields
-        StructField('code', StringType(), True),
-        StructField('name', StringType(), True), 
+        # Facility fields (prefixed with facility_)
+        StructField('facility_code', StringType(), True),
+        StructField('facility_name', StringType(), True),
         StructField('network_id', StringType(), True),
         StructField('network_region', StringType(), True),
         StructField('description', StringType(), True),
+        
+        # Unit fields
+        StructField('unit_code', StringType(), True),
         StructField('fueltech_id', StringType(), True),
         StructField('status_id', StringType(), True),
         StructField('capacity_registered', DoubleType(), True),  # Keep as number
         StructField('emissions_factor_co2', DoubleType(), True),  # Keep as number
+        StructField('dispatch_type', StringType(), True),
         StructField('data_first_seen', TimestampType(), True),  # UTC timestamp
         StructField('data_last_seen', TimestampType(), True),   # UTC timestamp
-        StructField('dispatch_type', StringType(), True),
     ]
-    
+
     return StructType(schema_fields)
 
 
@@ -247,32 +252,39 @@ def infer_schema_from_data(data, sample_size: int = 100):
     Returns:
         PySpark StructType schema
     """
-    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, VariantType, BooleanType, IntegerType
-    
+    from pyspark.sql.types import (
+        BooleanType,
+        DoubleType,
+        StringType,
+        StructField,
+        StructType,
+        TimestampType,
+    )
+
     if not data:
         return StructType()
-    
+
     # Sample data for schema inference
     sample_data = data[:min(sample_size, len(data))]
-    
+
     # Analyze field types across the sample
     field_types = {}
     for record in sample_data:
         for key, value in record.items():
             if key not in field_types:
                 field_types[key] = set()
-            
+
             if value is None:
                 field_types[key].add(type(None))
             else:
                 field_types[key].add(type(value))
-    
+
     # Create schema fields
     schema_fields = []
     for field_name, types in field_types.items():
         # Remove None type for schema definition
         types.discard(type(None))
-        
+
         if not types:
             # All values are None, default to StringType
             schema_fields.append(StructField(field_name, StringType(), True))
@@ -294,7 +306,7 @@ def infer_schema_from_data(data, sample_size: int = 100):
         else:
             # Multiple types, use string type for compatibility
             schema_fields.append(StructField(field_name, StringType(), True))
-    
+
     return StructType(schema_fields)
 
 
@@ -308,8 +320,8 @@ def create_facility_timeseries_schema():
     Returns:
         PySpark StructType schema optimized for facility timeseries data
     """
-    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
-    
+    from pyspark.sql.types import DoubleType, StringType, StructField, StructType, TimestampType
+
     schema_fields = [
         # Core time and grouping fields
         StructField('interval', TimestampType(), True),  # Network timezone datetime
@@ -319,19 +331,19 @@ def create_facility_timeseries_schema():
         StructField('unit_code', StringType(), True),      # Unit identifier
         StructField('fueltech_id', StringType(), True),    # Fuel technology
         StructField('status_id', StringType(), True),      # Unit status
-        
+
         # DataMetric fields (facility-specific)
         StructField('power', DoubleType(), True),          # Power generation
         StructField('energy', DoubleType(), True),         # Energy production
         StructField('market_value', DoubleType(), True),   # Market value
         StructField('emissions', DoubleType(), True),      # Emissions data
         StructField('renewable_proportion', DoubleType(), True), # Renewable proportion
-        
+
         # Additional metadata fields
         StructField('unit_capacity', DoubleType(), True),  # Unit capacity
         StructField('unit_efficiency', DoubleType(), True), # Unit efficiency
     ]
-    
+
     return StructType(schema_fields)
 
 
@@ -345,14 +357,14 @@ def create_market_timeseries_schema():
     Returns:
         PySpark StructType schema optimized for market timeseries data
     """
-    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
-    
+    from pyspark.sql.types import DoubleType, StringType, StructField, StructType, TimestampType
+
     schema_fields = [
         # Core time and grouping fields
         StructField('interval', TimestampType(), True),  # Network timezone datetime
         StructField('network_id', StringType(), True),   # Network identifier
         StructField('network_region', StringType(), True), # Region within network
-        
+
         # MarketMetric fields (market-specific)
         StructField('price', DoubleType(), True),         # Price data
         StructField('demand', DoubleType(), True),        # Demand data
@@ -363,11 +375,11 @@ def create_market_timeseries_schema():
         StructField('curtailment_solar_energy', DoubleType(), True), # Solar curtailment energy
         StructField('curtailment_wind', DoubleType(), True),   # Wind curtailment
         StructField('curtailment_wind_energy', DoubleType(), True), # Wind curtailment energy
-        
+
         # Additional metadata fields
         StructField('primary_grouping', StringType(), True), # Primary grouping (fueltech, status, etc.)
     ]
-    
+
     return StructType(schema_fields)
 
 
@@ -381,26 +393,26 @@ def create_network_timeseries_schema():
     Returns:
         PySpark StructType schema optimized for network timeseries data
     """
-    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
-    
+    from pyspark.sql.types import DoubleType, StringType, StructField, StructType, TimestampType
+
     schema_fields = [
         # Core time and grouping fields
         StructField('interval', TimestampType(), True),  # Network timezone datetime
         StructField('network_id', StringType(), True),   # Network identifier
         StructField('network_region', StringType(), True), # Region within network
-        
+
         # DataMetric fields (network-wide)
         StructField('power', DoubleType(), True),          # Network power
         StructField('energy', DoubleType(), True),         # Network energy
         StructField('market_value', DoubleType(), True),   # Network market value
         StructField('emissions', DoubleType(), True),      # Network emissions
         StructField('renewable_proportion', DoubleType(), True), # Network renewable proportion
-        
+
         # Network grouping fields
         StructField('primary_grouping', StringType(), True),   # Primary grouping (fueltech, status, etc.)
         StructField('secondary_grouping', StringType(), True), # Secondary grouping
     ]
-    
+
     return StructType(schema_fields)
 
 
@@ -431,8 +443,8 @@ def create_minimal_facility_timeseries_schema() -> "StructType":
     Returns:
         PySpark StructType schema with the 7 essential facility fields in specific order
     """
-    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
-    
+    from pyspark.sql.types import DoubleType, StringType, StructField, StructType, TimestampType
+
     # Always include these 7 essential fields for facility data in exact order
     essential_fields = [
         ('interval', TimestampType()),
@@ -443,12 +455,12 @@ def create_minimal_facility_timeseries_schema() -> "StructType":
         ('market_value', DoubleType()),
         ('facility_code', StringType()),
     ]
-    
+
     # Build schema with all essential fields in the specified order
     schema_fields = []
     for field_name, field_type in essential_fields:
         schema_fields.append(StructField(field_name, field_type, True))
-    
+
     return StructType(schema_fields)
 
 
@@ -467,23 +479,23 @@ def detect_timeseries_schema(records: list[dict]) -> "StructType":
     """
     if not records:
         return create_minimal_facility_timeseries_schema()  # Default fallback
-    
+
     # Get all unique field names from the records
     all_fields = set()
     for record in records:
         all_fields.update(record.keys())
-    
+
     # Check for market-specific fields
-    market_fields = {'price', 'demand', 'demand_energy', 'curtailment', 
+    market_fields = {'price', 'demand', 'demand_energy', 'curtailment',
                      'curtailment_energy', 'curtailment_solar', 'curtailment_wind'}
     if market_fields.intersection(all_fields):
         return create_market_timeseries_schema()
-    
+
     # Check for network-specific fields
     network_fields = {'primary_grouping', 'secondary_grouping'}
     if network_fields.intersection(all_fields):
         return create_network_timeseries_schema()
-    
+
     # For facility data, use minimal schema based on actual data
     return create_minimal_facility_timeseries_schema()
 
@@ -503,28 +515,27 @@ def create_timeseries_dataframe_batched(records: list[dict], spark_session, batc
     Returns:
         PySpark DataFrame with all records
     """
-    from pyspark.sql.types import StructType
-    
+
     if not records:
         return None
-    
+
     # Get the optimized schema
     schema = detect_timeseries_schema(records)
-    
+
     # For small datasets, use the fast single-pass method
     if len(records) <= batch_size:
         cleaned_records = clean_timeseries_records_fast(records)
         return spark_session.createDataFrame(cleaned_records, schema=schema)
-    
+
     # For large datasets, process in batches
     dataframes = []
-    
+
     for i in range(0, len(records), batch_size):
         batch = records[i:i + batch_size]
         cleaned_batch = clean_timeseries_records_fast(batch)
         batch_df = spark_session.createDataFrame(cleaned_batch, schema=schema)
         dataframes.append(batch_df)
-    
+
     # Union all batches
     if len(dataframes) == 1:
         return dataframes[0]
@@ -549,29 +560,29 @@ def clean_timeseries_records_fast(records: list[dict]) -> list[dict]:
     """
     if not records:
         return []
-    
+
     import datetime as dt
-    
+
     # Pre-define the set of metric fields for faster lookups
     metric_fields = {'POWER', 'ENERGY', 'MARKET_VALUE', 'EMISSIONS', 'PRICE', 'DEMAND', 'VALUE'}
-    
+
     # Process records in batches for better performance
     cleaned_records = []
-    
+
     for record in records:
         # Create new record dict (minimal object creation)
         cleaned_record = {}
-        
+
         for key, value in record.items():
             if value is None:
                 cleaned_record[key] = None
                 continue
-                
+
             # Fast type checking using isinstance (faster than hasattr)
             if isinstance(value, dt.datetime):
                 # Handle datetime conversion to UTC
                 if value.tzinfo is not None:
-                    cleaned_record[key] = value.astimezone(dt.timezone.utc).replace(tzinfo=None)
+                    cleaned_record[key] = value.astimezone(dt.UTC).replace(tzinfo=None)
                 else:
                     cleaned_record[key] = value  # Already naive, assume UTC
             elif hasattr(value, 'value'):  # Enum objects
@@ -587,7 +598,7 @@ def clean_timeseries_records_fast(records: list[dict]) -> list[dict]:
             else:
                 # For strings and other types, pass through
                 cleaned_record[key] = value
-        
+
         cleaned_records.append(cleaned_record)
-    
+
     return cleaned_records

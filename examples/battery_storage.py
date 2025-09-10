@@ -14,7 +14,7 @@ client = OEClient()
 def fetch_battery_storage_august():
     # First, get facility information to get the maximum capacity for BALB1
     facilities_response = client.get_facilities(facility_code=["BALBESS"])
-    
+
     # Find the BALB1 unit's maximum capacity (storage capacity in MWh)
     balb1_capacity_storage = None
     if facilities_response.data:
@@ -24,7 +24,7 @@ def fetch_battery_storage_august():
                     balb1_capacity_storage = unit.capacity_storage
                     print(f"Found BALB1 unit with storage capacity: {balb1_capacity_storage} MWh")
                     break
-    
+
     # Fetch hourly battery storage data for BALBESS for August 2025
     # Note: API returns data for all units, we'll filter for BALB1 in processing
     response = client.get_facility_data(
@@ -46,7 +46,7 @@ def fetch_battery_storage_august():
 
     for result in response.data[0].results:
         unit_code = getattr(result.columns, "unit_code", result.name)
-        
+
         # Skip if not BALB1 (though we should only get BALB1 data)
         if unit_code != "BALB1":
             continue
@@ -66,7 +66,7 @@ def fetch_battery_storage_august():
 
         # Add maximum capacity line if available
         if balb1_capacity_storage:
-            ax.axhline(y=balb1_capacity_storage, color="green", linestyle="-", alpha=0.5, 
+            ax.axhline(y=balb1_capacity_storage, color="green", linestyle="-", alpha=0.5,
                       label=f"Max Capacity: {balb1_capacity_storage:.1f} MWh")
 
         # Calculate statistics
@@ -80,7 +80,7 @@ def fetch_battery_storage_august():
         ax.set_title(f"{unit_code} - Battery Storage Level (Bidirectional Unit)")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper right")
-        
+
         # Set y-limit based on max capacity or max values
         y_max = max(balb1_capacity_storage * 1.1 if balb1_capacity_storage else 30,
                    max(values) * 1.1 if values else 30)

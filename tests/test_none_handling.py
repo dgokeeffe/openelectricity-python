@@ -4,9 +4,9 @@ Test None value handling in time series data.
 Simple tests to verify that None values are preserved correctly.
 """
 
-import pytest
 from datetime import datetime
-from pydantic import ValidationError
+
+import pytest
 
 try:
     import pandas as pd
@@ -14,10 +14,10 @@ except ImportError:
     pd = None
 
 from openelectricity.models.timeseries import (
-    TimeSeriesDataPoint,
-    TimeSeriesResult,
     NetworkTimeSeries,
+    TimeSeriesDataPoint,
     TimeSeriesResponse,
+    TimeSeriesResult,
     fix_none_values_in_data,
 )
 
@@ -35,9 +35,9 @@ class TestNoneHandling:
                 (datetime.now(), 200.0),
             ]
         }
-        
+
         result = fix_none_values_in_data(test_data)
-        
+
         # Check that None is preserved
         assert result["data"][1][1] is None
         assert result["data"][0][1] == 100.0
@@ -46,7 +46,7 @@ class TestNoneHandling:
     def test_timeseries_datapoint_with_none(self):
         """Test that TimeSeriesDataPoint can handle None values."""
         timestamp = datetime.now()
-        
+
         # Should work with None value
         point = TimeSeriesDataPoint((timestamp, None))
         assert point.timestamp == timestamp
@@ -55,7 +55,7 @@ class TestNoneHandling:
     def test_timeseries_result_with_none_data(self):
         """Test that TimeSeriesResult can handle None values in data."""
         timestamp = datetime.now()
-        
+
         result_data = {
             "name": "test_metric",
             "date_start": timestamp,
@@ -67,9 +67,9 @@ class TestNoneHandling:
                 (timestamp, 200.0),
             ]
         }
-        
+
         result = TimeSeriesResult.model_validate(result_data)
-        
+
         # Check that None is preserved
         assert result.data[1].value is None
         assert result.data[0].value == 100.0
@@ -78,7 +78,7 @@ class TestNoneHandling:
     def test_network_timeseries_with_none_data(self):
         """Test that NetworkTimeSeries can handle None values."""
         timestamp = datetime.now()
-        
+
         timeseries_data = {
             "network_code": "NEM",
             "metric": "power",
@@ -99,9 +99,9 @@ class TestNoneHandling:
                 }
             ]
         }
-        
+
         timeseries = NetworkTimeSeries.model_validate(timeseries_data)
-        
+
         # Check that None is preserved
         assert timeseries.results[0].data[1].value is None
         assert timeseries.results[0].data[0].value == 1000.0
@@ -110,7 +110,7 @@ class TestNoneHandling:
     def test_timeseries_response_with_none_data(self):
         """Test that TimeSeriesResponse can handle None values."""
         timestamp = datetime.now()
-        
+
         response_data = {
             "version": "1.0",
             "created_at": timestamp,
@@ -137,9 +137,9 @@ class TestNoneHandling:
                 }
             ]
         }
-        
+
         response = TimeSeriesResponse.model_validate(response_data)
-        
+
         # Check that None is preserved
         assert response.data[0].results[0].data[1].value is None
         assert response.data[0].results[0].data[0].value == 1000.0
@@ -150,7 +150,7 @@ class TestNoneHandling:
         from datetime import timedelta
         timestamp1 = datetime.now()
         timestamp2 = timestamp1 + timedelta(minutes=5)
-        
+
         response_data = {
             "version": "1.0",
             "created_at": timestamp1,
@@ -176,10 +176,10 @@ class TestNoneHandling:
                 }
             ]
         }
-        
+
         response = TimeSeriesResponse.model_validate(response_data)
         records = response.to_records()
-        
+
         # Check that None is preserved in records
         assert len(records) == 2
         # Find the record with None value
@@ -193,7 +193,7 @@ class TestNoneHandling:
         from datetime import timedelta
         timestamp1 = datetime.now()
         timestamp2 = timestamp1 + timedelta(minutes=5)
-        
+
         response_data = {
             "version": "1.0",
             "created_at": timestamp1,
@@ -219,9 +219,9 @@ class TestNoneHandling:
                 }
             ]
         }
-        
+
         response = TimeSeriesResponse.model_validate(response_data)
-        
+
         # Test pandas conversion
         try:
             df = response.to_pandas()
@@ -240,7 +240,7 @@ class TestNoneHandling:
         """Test that validation errors are handled gracefully with None values."""
         # This should not raise an exception even with None values
         timestamp = datetime.now()
-        
+
         response_data = {
             "version": "1.0",
             "created_at": timestamp,
@@ -265,7 +265,7 @@ class TestNoneHandling:
                 }
             ]
         }
-        
+
         # This should not raise an exception
         response = TimeSeriesResponse.model_validate(response_data)
         assert response.data[0].results[0].data[0].value is None

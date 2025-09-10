@@ -4,15 +4,15 @@ Test script to identify which market metrics work with the get_market method.
 """
 
 import asyncio
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
 import os
-import pytest
+from datetime import datetime, timedelta
 
-from openelectricity import AsyncOEClient
-from openelectricity.settings_schema import settings
-from openelectricity.types import MarketMetric
+import pytest
+from dotenv import load_dotenv
+
+from openelectricity import OEClient
 from openelectricity.models.timeseries import TimeSeriesResponse
+from openelectricity.types import MarketMetric
 
 # Load environment variables from .env file
 load_dotenv()
@@ -294,67 +294,67 @@ def market_metric_response():
 
 def test_to_records_to_pandas(market_metric_response):
     """Test that to_records properly parses the market_metric_response fixture."""
-    
+
     # Parse the response into a TimeSeriesResponse object
     response = TimeSeriesResponse.model_validate(market_metric_response)
-    
+
     # Convert to records
     records = response.to_records()
-    
+
 
 
 def test_to_records_parses_market_metric_response(market_metric_response):
     """Test that to_records properly parses the market_metric_response fixture."""
-    
+
     # Parse the response into a TimeSeriesResponse object
     response = TimeSeriesResponse.model_validate(market_metric_response)
-    
+
     # Convert to records
     records = response.to_records()
-    
+
     # Basic validation
     assert isinstance(records, list)
     assert len(records) > 0
-    
+
     # Expected number of records: 3 metrics × 5 regions × 7 days = 105 records
     # But due to the way to_records works (combining metrics for same timestamp/region),
     # we should get 5 regions × 7 days = 35 records
     expected_records = 35
     assert len(records) == expected_records
-    
+
     # Check first record structure
     first_record = records[0]
     assert isinstance(first_record, dict)
-    
+
     # Required fields that should be present
     required_fields = {"interval", "network_region"}
     assert all(field in first_record for field in required_fields)
-    
+
     # Check that all three metrics are present in the first record
     metric_fields = {"price", "demand", "demand_energy"}
     assert all(field in first_record for field in metric_fields)
-    
+
     # Validate interval field
     assert isinstance(first_record["interval"], datetime)
     assert first_record["interval"].tzinfo is not None  # Should have timezone info
-    
+
     # Validate network_region field
     assert isinstance(first_record["network_region"], str)
     assert first_record["network_region"] in ["NSW1", "QLD1", "SA1", "TAS1", "VIC1"]
-    
+
     # Validate metric values are numeric
     for metric in metric_fields:
         assert isinstance(first_record[metric], (int, float))
-    
+
     # Check that we have records for all expected regions
     regions_found = set(record["network_region"] for record in records)
     expected_regions = {"NSW1", "QLD1", "SA1", "TAS1", "VIC1"}
     assert regions_found == expected_regions
-    
+
     # Check that we have records for all expected dates (7 days)
     dates_found = set(record["interval"].date() for record in records)
     assert len(dates_found) == 7
-    
+
     # Verify specific data points
     # Find NSW1 record for 2025-07-29
     nsw1_record = next(
@@ -365,7 +365,7 @@ def test_to_records_parses_market_metric_response(market_metric_response):
     assert abs(nsw1_record["price"] - 162.13802) < 0.001
     assert abs(nsw1_record["demand"] - 2569802.8) < 0.001
     assert abs(nsw1_record["demand_energy"] - 214.1436) < 0.001
-    
+
     # Verify timezone handling
     # All intervals should be in +10:00 timezone
     for record in records:
@@ -375,120 +375,120 @@ def test_to_records_parses_market_metric_response(market_metric_response):
         offset = interval.utcoffset()
         assert offset is not None
         assert offset.total_seconds() == 10 * 3600  # +10:00 in seconds
-    
+
     # Verify data consistency
     # Each region should have exactly 7 records (one per day)
     for region in expected_regions:
         region_records = [r for r in records if r["network_region"] == region]
         assert len(region_records) == 7
-        
+
         # All records for this region should have the same region value
         assert all(r["network_region"] == region for r in region_records)
-        
+
         # All records should have all three metrics
         assert all(all(metric in r for metric in metric_fields) for r in region_records)
 
 
 def test_market_metric_response_to_pandas_dataframe(market_metric_response):
     """Test that market_metric_response converts to pandas DataFrame with proper columns and region matching."""
-    
+
     # Parse the response into a TimeSeriesResponse object
     response = TimeSeriesResponse.model_validate(market_metric_response)
-    
+
     # Convert to pandas DataFrame
     df = response.to_pandas()
-    
+
     # Basic DataFrame validation
     assert df is not None
     assert len(df) == 35  # 5 regions × 7 days
-    
+
     # Check that DataFrame has the expected columns
     expected_columns = {"interval", "network_region", "price", "demand", "demand_energy"}
     actual_columns = set(df.columns)
     assert actual_columns == expected_columns, f"Expected columns {expected_columns}, got {actual_columns}"
-    
+
     # Validate data types
     assert "datetime" in str(df["interval"].dtype)  # datetime objects
     assert df["network_region"].dtype == "object"  # string
     assert df["price"].dtype in ["float64", "float32"]
     assert df["demand"].dtype in ["float64", "float32"]
     assert df["demand_energy"].dtype in ["float64", "float32"]
-    
+
     # Check that all regions are present
     regions_in_df = set(df["network_region"].unique())
     expected_regions = {"NSW1", "QLD1", "SA1", "TAS1", "VIC1"}
     assert regions_in_df == expected_regions, f"Expected regions {expected_regions}, got {regions_in_df}"
-    
+
     # Check that each region has exactly 7 rows (one per day)
     for region in expected_regions:
         region_count = len(df[df["network_region"] == region])
         assert region_count == 7, f"Region {region} has {region_count} rows, expected 7"
-    
+
     # Check that all dates are present (7 unique dates)
     unique_dates = df["interval"].dt.date.unique()
     assert len(unique_dates) == 7, f"Expected 7 unique dates, got {len(unique_dates)}"
-    
+
     # Verify specific data points match the original JSON
     # NSW1 on 2025-07-29
     nsw1_row = df[
-        (df["network_region"] == "NSW1") & 
+        (df["network_region"] == "NSW1") &
         (df["interval"].dt.date == datetime(2025, 7, 29).date())
     ]
     assert len(nsw1_row) == 1, "Should have exactly one row for NSW1 on 2025-07-29"
-    
+
     nsw1_data = nsw1_row.iloc[0]
     assert abs(nsw1_data["price"] - 162.13802) < 0.001
     assert abs(nsw1_data["demand"] - 2569802.8) < 0.001
     assert abs(nsw1_data["demand_energy"] - 214.1436) < 0.001
-    
+
     # QLD1 on 2025-07-30
     qld1_row = df[
-        (df["network_region"] == "QLD1") & 
+        (df["network_region"] == "QLD1") &
         (df["interval"].dt.date == datetime(2025, 7, 30).date())
     ]
     assert len(qld1_row) == 1, "Should have exactly one row for QLD1 on 2025-07-30"
-    
+
     qld1_data = qld1_row.iloc[0]
     assert abs(qld1_data["price"] - 100.33552) < 0.001
     assert abs(qld1_data["demand"] - 1808055.1) < 0.001
     assert abs(qld1_data["demand_energy"] - 150.6713) < 0.001
-    
+
     # Check that there are no missing values in metric columns
     assert not df["price"].isna().any(), "Price column should not have missing values"
     assert not df["demand"].isna().any(), "Demand column should not have missing values"
     assert not df["demand_energy"].isna().any(), "Demand_energy column should not have missing values"
-    
+
     # Verify timezone information is preserved
     # All intervals should have timezone info
     assert all(interval.tzinfo is not None for interval in df["interval"])
-    
+
     # Check that all intervals are in +10:00 timezone
     for interval in df["interval"]:
         offset = interval.utcoffset()
         assert offset is not None
         assert offset.total_seconds() == 10 * 3600  # +10:00 in seconds
-    
+
     # Test DataFrame operations
     # Group by region and verify counts
     region_counts = df.groupby("network_region").size()
     for region in expected_regions:
         assert region_counts[region] == 7, f"Region {region} should have 7 rows"
-    
+
     # Test filtering by region
     nsw1_df = df[df["network_region"] == "NSW1"]
     assert len(nsw1_df) == 7
     assert all(region == "NSW1" for region in nsw1_df["network_region"])
-    
+
     # Test sorting
     sorted_df = df.sort_values(["network_region", "interval"])
     assert len(sorted_df) == len(df)
-    
+
     # Verify the DataFrame can be used for analysis
     # Check summary statistics
     assert df["price"].mean() > 0
     assert df["demand"].mean() > 0
     assert df["demand_energy"].mean() > 0
-    
+
     # Check that each metric has reasonable value ranges
     assert df["price"].min() >= -1  # Allow for negative prices (like SA1 on 2025-08-04)
     assert df["price"].max() < 1000
@@ -500,34 +500,34 @@ def test_market_metric_response_to_pandas_dataframe(market_metric_response):
 
 def demonstrate_market_metric_dataframe(market_metric_response):
     """Demonstrate what the pandas DataFrame looks like when created from market_metric_response."""
-    
+
     # Parse the response into a TimeSeriesResponse object
     response = TimeSeriesResponse.model_validate(market_metric_response)
-    
+
     # Convert to pandas DataFrame
     df = response.to_pandas()
-    
+
     print("=== Market Metric DataFrame Demonstration ===")
     print(f"DataFrame shape: {df.shape}")
     print(f"Columns: {list(df.columns)}")
     print(f"Data types:\n{df.dtypes}")
     print(f"\nUnique regions: {sorted(df['network_region'].unique())}")
     print(f"Date range: {df['interval'].min()} to {df['interval'].max()}")
-    
+
     print("\n=== Sample Data (first 10 rows) ===")
     print(df.head(10).to_string(index=False))
-    
+
     print("\n=== Summary Statistics ===")
     print(df.describe())
-    
+
     print("\n=== Data by Region ===")
     for region in sorted(df['network_region'].unique()):
         region_df = df[df['network_region'] == region]
         print(f"{region}: {len(region_df)} rows, price range: ${region_df['price'].min():.2f} - ${region_df['price'].max():.2f}")
-    
+
     print("\n=== Verification: NSW1 on 2025-07-29 ===")
     nsw1_row = df[
-        (df["network_region"] == "NSW1") & 
+        (df["network_region"] == "NSW1") &
         (df["interval"].dt.date == datetime(2025, 7, 29).date())
     ]
     if len(nsw1_row) == 1:
@@ -537,7 +537,7 @@ def demonstrate_market_metric_dataframe(market_metric_response):
         print(f"Demand Energy: {data['demand_energy']:.1f} MWh")
     else:
         print("❌ Expected exactly one row for NSW1 on 2025-07-29")
-    
+
     return df
 
 
@@ -553,7 +553,7 @@ async def test_market_metric_combinations():
         print("OPENELECTRICITY_API_KEY=your_api_key_here")
         return
 
-    client = AsyncOEClient(api_key=api_key)
+    client = OEClient(api_key=api_key)
 
     # Test date range
     end_date = datetime.now()
@@ -574,7 +574,7 @@ async def test_market_metric_combinations():
     for metric in all_market_metrics:
         try:
             print(f"  Testing {metric.value}...", end=" ")
-            response = await client.get_market(
+            response = await client.get_market_async(
                 network_code="NEM",
                 metrics=[metric],
                 interval="5m",
@@ -592,7 +592,7 @@ async def test_market_metric_combinations():
         for metric2 in all_market_metrics[i + 1 :]:
             try:
                 print(f"  Testing {metric1.value} + {metric2.value}...", end=" ")
-                response = await client.get_market(
+                response = await client.get_market_async(
                     network_code="NEM",
                     metrics=[metric1, metric2],
                     interval="5m",
@@ -608,7 +608,7 @@ async def test_market_metric_combinations():
     # Test all market metrics together
     try:
         print("  Testing all market metrics...", end=" ")
-        response = await client.get_market(
+        response = await client.get_market_async(
             network_code="NEM",
             metrics=all_market_metrics,
             interval="5m",
@@ -625,7 +625,7 @@ async def test_market_metric_combinations():
             test_metrics = all_market_metrics[:i] + all_market_metrics[i + 1 :]
             try:
                 print(f"  Testing without {metric.value}...", end=" ")
-                response = await client.get_market(
+                response = await client.get_market_async(
                     network_code="NEM",
                     metrics=test_metrics,
                     interval="5m",
@@ -647,7 +647,7 @@ async def test_market_metric_combinations():
     for interval in intervals:
         try:
             print(f"  Testing {interval} interval...", end=" ")
-            response = await client.get_market(
+            response = await client.get_market_async(
                 network_code="NEM",
                 metrics=working_metrics,
                 interval=interval,
@@ -658,7 +658,7 @@ async def test_market_metric_combinations():
         except Exception as e:
             print(f"❌ FAILED: {e}")
 
-    await client.close()
+        await client.aclose()
 
 
 if __name__ == "__main__":

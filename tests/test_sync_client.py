@@ -4,25 +4,22 @@ Tests for the synchronous OEClient.
 This module tests the new synchronous client implementation using the requests library.
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timedelta
-import requests
+from unittest.mock import Mock, patch
 
-from openelectricity.client import OEClient, OpenElectricityError, APIError
+import httpx
+import pytest
+
+from openelectricity.client import APIError, OEClient, OpenElectricityError
+from openelectricity.models.facilities import FacilityResponse
+from openelectricity.models.timeseries import TimeSeriesResponse
+from openelectricity.models.user import OpennemUserResponse
 from openelectricity.types import (
-    NetworkCode,
     DataMetric,
-    DataInterval,
-    DataPrimaryGrouping,
-    DataSecondaryGrouping,
     MarketMetric,
     UnitFueltechType,
     UnitStatusType,
 )
-from openelectricity.models.facilities import FacilityResponse
-from openelectricity.models.timeseries import TimeSeriesResponse
-from openelectricity.models.user import OpennemUserResponse
 
 
 class TestOEClient:
@@ -32,8 +29,9 @@ class TestOEClient:
     def mock_response(self):
         """Create a mock response object."""
         mock = Mock()
-        mock.ok = True
+        mock.is_success = True
         mock.status_code = 200
+        mock.reason_phrase = "OK"
         mock.json.return_value = {"data": [], "success": True}
         return mock
 
@@ -41,9 +39,9 @@ class TestOEClient:
     def mock_error_response(self):
         """Create a mock error response object."""
         mock = Mock()
-        mock.ok = False
+        mock.is_success = False
         mock.status_code = 404
-        mock.reason = "Not Found"
+        mock.reason_phrase = "Not Found"
         mock.json.return_value = {"detail": "Resource not found"}
         return mock
 
@@ -101,34 +99,30 @@ class TestOEClient:
         assert "key4" in cleaned
         assert "key5" in cleaned
 
-    @patch("openelectricity.client.requests.Session")
-    def test_ensure_session(self, mock_session_class, client):
-        """Test session creation and configuration."""
+    @patch("openelectricity.client.httpx.Client")
+    def test_ensure_sync_client(self, mock_session_class, client):
+        """Test sync client creation and configuration."""
         mock_session = Mock()
         mock_session_class.return_value = mock_session
 
-        session = client._ensure_session()
+        session = client._ensure_sync_client()
 
-        # Verify session was created
+        # Verify client was created with headers
         mock_session_class.assert_called_once()
+        call_args = mock_session_class.call_args
+        assert 'headers' in call_args.kwargs
 
-        # Verify headers were set
-        mock_session.headers.update.assert_called_once_with(client.headers)
-
-        # Verify HTTP adapter was configured
-        mock_session.mount.assert_called_once()
-
-    @patch("openelectricity.client.requests.Session")
+    @patch("openelectricity.client.httpx.Client")
     def test_ensure_session_reuses_existing(self, mock_session_class, client):
         """Test that existing session is reused."""
         mock_session = Mock()
         mock_session_class.return_value = mock_session
 
         # Create session first time
-        session1 = client._ensure_session()
+        session1 = client._ensure_sync_client()
 
         # Create session second time
-        session2 = client._ensure_session()
+        session2 = client._ensure_sync_client()
 
         # Should be the same session
         assert session1 is session2
@@ -152,9 +146,9 @@ class TestOEClient:
     def test_handle_response_error_without_json(self, client):
         """Test error response handling when JSON parsing fails."""
         mock_response = Mock()
-        mock_response.ok = False
+        mock_response.is_success = False
         mock_response.status_code = 500
-        mock_response.reason = "Internal Server Error"
+        mock_response.reason_phrase = "Internal Server Error"
         mock_response.json.side_effect = Exception("JSON parse error")
 
         with pytest.raises(APIError) as exc_info:
@@ -163,7 +157,7 @@ class TestOEClient:
         assert exc_info.value.status_code == 500
         assert "Internal Server Error" in str(exc_info.value)
 
-    @patch("openelectricity.client.requests.Session")
+    @patch("openelectricity.client.httpx.Client")
     def test_get_facilities(self, mock_session_class, client, mock_response):
         """Test get_facilities method."""
         mock_session = Mock()
@@ -208,7 +202,7 @@ class TestOEClient:
         # Verify result
         assert isinstance(result, FacilityResponse)
 
-    @patch("openelectricity.client.requests.Session")
+    @patch("openelectricity.client.httpx.Client")
     def test_get_facilities_with_filters(self, mock_session_class, client, mock_response):
         """Test get_facilities method with filters."""
         mock_session = Mock()
@@ -235,7 +229,7 @@ class TestOEClient:
         assert params["network_id"] == ["NEM"]
         assert params["network_region"] == "QLD1"
 
-    @patch("openelectricity.client.requests.Session")
+    @patch("openelectricity.client.httpx.Client")
     def test_get_network_data(self, mock_session_class, client, mock_response):
         """Test get_network_data method."""
         mock_session = Mock()
@@ -287,7 +281,7 @@ class TestOEClient:
         # Verify result
         assert isinstance(result, TimeSeriesResponse)
 
-    @patch("openelectricity.client.requests.Session")
+    @patch("openelectricity.client.httpx.Client")
     def test_get_facility_data(self, mock_session_class, client, mock_response):
         """Test get_facility_data method."""
         mock_session = Mock()
@@ -331,7 +325,7 @@ class TestOEClient:
         # Verify result
         assert isinstance(result, TimeSeriesResponse)
 
-    @patch("openelectricity.client.requests.Session")
+    @patch("openelectricity.client.httpx.Client")
     def test_get_market(self, mock_session_class, client, mock_response):
         """Test get_market method."""
         mock_session = Mock()
@@ -381,7 +375,7 @@ class TestOEClient:
         # Verify result
         assert isinstance(result, TimeSeriesResponse)
 
-    @patch("openelectricity.client.requests.Session")
+    @patch("openelectricity.client.httpx.Client")
     def test_get_current_user(self, mock_session_class, client, mock_response):
         """Test get_current_user method."""
         mock_session = Mock()
@@ -423,15 +417,15 @@ class TestOEClient:
 
     def test_close_method(self, client):
         """Test client close method."""
-        # Mock the session
-        mock_session = Mock()
-        client._session = mock_session
+        # Mock the sync client
+        mock_sync_client = Mock()
+        client._sync_client = mock_sync_client
 
         client.close()
 
-        # Verify session was closed
-        mock_session.close.assert_called_once()
-        assert client._session is None
+        # Verify sync client was closed
+        mock_sync_client.close.assert_called_once()
+        assert client._sync_client is None
 
     def test_close_method_no_session(self, client):
         """Test close method when no session exists."""
@@ -440,35 +434,31 @@ class TestOEClient:
 
     def test_del_method(self, client):
         """Test client destructor."""
-        # Mock the session
-        mock_session = Mock()
-        client._session = mock_session
+        # Mock the sync client
+        mock_sync_client = Mock()
+        client._sync_client = mock_sync_client
 
         # Call destructor
         client.__del__()
 
-        # Verify session was closed
-        mock_session.close.assert_called_once()
+        # Verify sync client was closed
+        mock_sync_client.close.assert_called_once()
 
-    @patch("openelectricity.client.requests.Session")
-    def test_session_configuration(self, mock_session_class, client):
-        """Test that session is configured with proper HTTP adapter."""
+    @patch("openelectricity.client.httpx.Client")
+    def test_client_configuration(self, mock_session_class, client):
+        """Test that httpx client is configured properly."""
         mock_session = Mock()
         mock_session_class.return_value = mock_session
 
-        client._ensure_session()
+        client._ensure_sync_client()
 
-        # Verify HTTP adapter was configured
-        mock_session.mount.assert_called_once()
-        mount_args = mock_session.mount.call_args
-        assert mount_args[0][0] == "https://"
+        # Verify httpx client was created with proper configuration
+        mock_session_class.assert_called_once()
+        call_args = mock_session_class.call_args
 
-        # Verify adapter configuration
-        adapter = mount_args[0][1]
-        assert adapter._pool_connections == 10
-        assert adapter._pool_maxsize == 20
-        assert adapter.max_retries.total == 3
-        assert adapter._pool_block is False
+        # Check that timeout and limits are configured
+        assert 'timeout' in call_args.kwargs
+        assert 'limits' in call_args.kwargs
 
 
 class TestOEClientErrorHandling:
@@ -479,17 +469,17 @@ class TestOEClientErrorHandling:
         """Create a test client instance."""
         return OEClient(api_key="test-api-key")
 
-    @patch("openelectricity.client.requests.Session")
+    @patch("openelectricity.client.httpx.Client")
     def test_network_error_handling(self, mock_session_class, client):
         """Test handling of network errors."""
         mock_session = Mock()
-        mock_session.get.side_effect = requests.RequestException("Network error")
+        mock_session.get.side_effect = httpx.RequestError("Network error")
         mock_session_class.return_value = mock_session
 
-        with pytest.raises(requests.RequestException, match="Network error"):
+        with pytest.raises(httpx.RequestError, match="Network error"):
             client.get_facilities()
 
-    @patch("openelectricity.client.requests.Session")
+    @patch("openelectricity.client.httpx.Client")
     def test_invalid_json_response(self, mock_session_class, client):
         """Test handling of invalid JSON responses."""
         mock_session = Mock()

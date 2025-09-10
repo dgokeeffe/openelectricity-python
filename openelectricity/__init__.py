@@ -4,13 +4,13 @@ OpenElectricity Python SDK
 This package provides a Python client for interacting with the OpenElectricity API.
 """
 
-from openelectricity.client import AsyncOEClient, OEClient
+from openelectricity.client import OEClient
 
 __name__ = "openelectricity"
 
 __version__ = "0.9.0"
 
-__all__ = ["OEClient", "AsyncOEClient"]
+__all__ = ["OEClient"]
 
 # Optional imports for styling (won't fail if dependencies are missing)
 # We don't actually import the module here, just expose it conditionally

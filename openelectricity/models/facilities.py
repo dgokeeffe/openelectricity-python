@@ -4,8 +4,8 @@ Facility models for the OpenElectricity API.
 This module contains models related to facility data and responses.
 """
 
-from datetime import datetime
 import datetime as dt
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -33,7 +33,7 @@ def convert_field_value(key: str, value):
         # Convert timezone-aware datetime to UTC for TimestampType compatibility
         if hasattr(value, 'tzinfo') and value.tzinfo is not None:
             # Convert timezone-aware datetime to UTC
-            return value.astimezone(dt.timezone.utc).replace(tzinfo=None)
+            return value.astimezone(dt.UTC).replace(tzinfo=None)
         else:
             return value  # Already naive datetime, assume UTC
     elif isinstance(value, bool):
@@ -113,18 +113,18 @@ class FacilityResponse(APIResponse[Facility]):
             return []
 
         records = []
-        
+
         for facility in self.data:
             # Convert facility to dict
             facility_dict = facility.model_dump()
-            
+
             # Get facility-level fields
             facility_code = facility_dict.get('code')
             facility_name = facility_dict.get('name')
             network_id = facility_dict.get('network_id')
             network_region = facility_dict.get('network_region')
             description = facility_dict.get('description')
-            
+
             # Process each unit in the facility
             units = facility_dict.get('units', [])
             for unit in units:
@@ -133,20 +133,20 @@ class FacilityResponse(APIResponse[Facility]):
                     unit_dict = unit.model_dump()
                 else:
                     unit_dict = unit  # Already a dict
-                
+
                 # Create record with specified schema
                 fueltech_value = unit_dict.get('fueltech_id')
                 if hasattr(fueltech_value, 'value'):
                     fueltech_value = fueltech_value.value
                 elif fueltech_value is not None:
                     fueltech_value = str(fueltech_value)
-                
+
                 status_value = unit_dict.get('status_id')
                 if hasattr(status_value, 'value'):
                     status_value = status_value.value
                 elif status_value is not None:
                     status_value = str(status_value)
-                
+
                 record = {
                     "facility_code": facility_code,
                     "facility_name": facility_name,
@@ -162,9 +162,9 @@ class FacilityResponse(APIResponse[Facility]):
                     "data_first_seen": unit_dict.get('data_first_seen'),
                     "data_last_seen": unit_dict.get('data_last_seen')
                 }
-                
+
                 records.append(record)
-        
+
         return records
 
     def to_pyspark(self, spark_session=None, app_name: str = "OpenElectricity") -> "Optional['DataFrame']":  # noqa: F821
@@ -180,95 +180,45 @@ class FacilityResponse(APIResponse[Facility]):
         """
         try:
             from openelectricity.spark_utils import create_spark_dataframe
-            
-            # Convert facilities to list of dictionaries
-            if not self.data:
+
+            # Use to_records() to ensure consistent schema with to_pandas()
+            records = self.to_records()
+            if not records:
                 return None
-            
-            # Debug logging to understand data structure
+
+            # Debug logging
             import logging
             logger = logging.getLogger(__name__)
-            logger.debug(f"Converting {len(self.data)} facilities to PySpark DataFrame")
-            if self.data:
-                logger.debug(f"First facility type: {type(self.data[0])}")
-                if hasattr(self.data[0], 'units'):
-                    logger.debug(f"First facility units type: {type(self.data[0].units)}")
-                    if self.data[0].units:
-                        logger.debug(f"First unit type: {type(self.data[0].units[0])}")
-                
-            # Convert each facility to dict, handling nested units
-            records = []
-            for i, facility in enumerate(self.data):
-                try:
-                    # Convert facility to dict
-                    facility_dict = facility.model_dump()
-                    
-                    # Handle units - create separate records for each unit
-                    units = facility_dict.get('units', [])
-                    if units and isinstance(units, list):
-                        for j, unit in enumerate(units):
-                            try:
-                                # Create combined record
-                                record = {}
-                                
-                                # Add facility fields (excluding units) with proper type preservation
-                                for key, value in facility_dict.items():
-                                    if key != 'units':
-                                        record[key] = convert_field_value(key, value)
-                                
-                                # Add unit fields with proper type preservation
-                                for key, value in unit.items():
-                                    record[key] = convert_field_value(key, value)
-                                
-                                records.append(record)
-                                
-                            except Exception as unit_error:
-                                logger.warning(f"Error processing unit {j} of facility {i}: {unit_error}")
-                                continue
-                    else:
-                        # No units, just add facility data
-                        record = {}
-                        for key, value in facility_dict.items():
-                            if key != 'units':
-                                record[key] = convert_field_value(key, value)
-                        records.append(record)
-                        
-                except Exception as facility_error:
-                    logger.warning(f"Error processing facility {i}: {facility_error}")
-                    continue
-            
-            # Debug: Check if we have any records and their structure
-            logger.debug(f"Created {len(records)} records for PySpark conversion")
+            logger.debug(f"Converting {len(records)} facility records to PySpark DataFrame")
             if records:
                 logger.debug(f"First record keys: {list(records[0].keys())}")
-                logger.debug(f"First record sample: {str(records[0])[:200]}...")
-            
+
             # Try to create DataFrame using predefined schema optimized for facilities
             try:
                 if spark_session is None:
                     from openelectricity.spark_utils import get_spark_session
                     spark_session = get_spark_session()
-                
-                # Use predefined schema aligned with Pydantic models for better performance
+
+                # Use predefined schema aligned with to_records() output
                 from openelectricity.spark_utils import create_facilities_flattened_schema
-                
+
                 facilities_schema = create_facilities_flattened_schema()
-                
+
                 logger.debug(f"Creating PySpark DataFrame with {len(records)} records using predefined schema")
-                logger.debug(f"Schema aligned with Pydantic models: {facilities_schema}")
-                
+                logger.debug(f"Schema aligned with to_records(): {facilities_schema}")
+
                 # Create DataFrame with predefined schema
                 df = spark_session.createDataFrame(records, schema=facilities_schema)
                 logger.debug(f"Successfully created PySpark DataFrame with {len(records)} records")
                 return df
-                
+
             except Exception as spark_error:
                 logger.error(f"Error creating PySpark DataFrame: {spark_error}")
                 import traceback
                 logger.debug(f"Full error traceback: {traceback.format_exc()}")
                 logger.info("Falling back to None - use to_pandas() for facilities data")
                 return None
-            
+
         except ImportError:
             # Log warning but don't raise error to maintain compatibility
             import logging
@@ -307,5 +257,5 @@ class FacilityResponse(APIResponse[Facility]):
 
         # Use to_records() to ensure consistent schema
         records = self.to_records()
-        
+
         return pd.DataFrame(records)

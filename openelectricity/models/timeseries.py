@@ -4,15 +4,14 @@ Time series models for the OpenElectricity API.
 This module contains models for time series data responses.
 """
 
+import datetime as dt
 import re
+import warnings
 from collections.abc import Sequence
 from datetime import datetime, timedelta
-import datetime as dt
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-import warnings
 from pydantic import BaseModel, Field, RootModel, ValidationError
-from pydantic_core import ErrorDetails
 
 from openelectricity.models.base import APIResponse
 from openelectricity.types import DataInterval, NetworkCode
@@ -46,17 +45,17 @@ def filter_problematic_fields(obj, errors):
     """
     if not isinstance(obj, dict):
         return obj
-    
+
     # Get all problematic field paths
     problematic_paths = set()
     for error in errors:
         path = error["loc"]
         if path:
             problematic_paths.add(tuple(path))
-    
+
     # Create a filtered copy
     filtered_obj = obj.copy()
-    
+
     # Remove problematic fields
     for path in problematic_paths:
         current = filtered_obj
@@ -69,7 +68,7 @@ def filter_problematic_fields(obj, errors):
             # Remove the problematic field
             if isinstance(current, dict) and path[-1] in current:
                 del current[path[-1]]
-    
+
     return filtered_obj
 
 
@@ -257,7 +256,7 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
             return timestamp
         else:
             # No timezone info, assume UTC and convert to target
-            utc_timestamp = timestamp.replace(tzinfo=timezone.utc)
+            utc_timestamp = timestamp.replace(tzinfo=dt.UTC)
             return utc_timestamp.astimezone(target_tz)
 
     def to_records(self) -> list[dict[str, Any]]:
@@ -272,7 +271,7 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
 
         # Use a dictionary for O(1) lookups instead of O(n) list searches
         records_dict: dict[tuple, dict[str, Any]] = {}
-        
+
         # Pre-compile regex for better performance
         # Updated pattern to match unit codes like BW01, BW02, etc. without requiring a pipe
         region_regex = re.compile(r'_([A-Z]+\d+)$')
@@ -282,7 +281,7 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
             for result in series.results:
                 # Get grouping information - cache the dict comprehension
                 groupings = {k: v for k, v in result.columns.__dict__.items() if v is not None and k != "unit_code"}
-                
+
                 # Extract network_region from result.name if not available in columns
                 if "network_region" not in groupings or groupings.get("network_region") is None:
                     # Use pre-compiled regex for better performance
@@ -301,13 +300,13 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
 
                 # Create a frozen set of groupings for faster comparison
                 groupings_frozen = frozenset(groupings.items())
-                
+
                 # Process each data point
                 for point in result.data:
                     # Create a simple tuple key for O(1) dictionary lookup
                     # Use timestamp directly instead of isoformat() for better performance
                     record_key = (point.timestamp, groupings_frozen)
-                    
+
                     if record_key in records_dict:
                         # Update existing record with this metric
                         records_dict[record_key][series.metric] = point.value
@@ -364,7 +363,7 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
 
         return pd.DataFrame(self.to_records())
 
-    def to_pyspark(self, spark_session=None, use_batching: bool = False, batch_size: int = 10000) -> "Optional['DataFrame']":  # noqa: F821
+    def to_pyspark(self, spark_session=None, use_batching: bool = False, batch_size: int = 10000) -> "'DataFrame' | None":  # noqa: F821
         """
         Convert time series data into a PySpark DataFrame with optimized performance.
 
@@ -377,20 +376,26 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
             A PySpark DataFrame containing the time series data, or None if PySpark is not available
         """
         try:
-            from openelectricity.spark_utils import get_spark_session, detect_timeseries_schema, clean_timeseries_records_fast, create_timeseries_dataframe_batched
             import logging
-            
+
+            from openelectricity.spark_utils import (
+                clean_timeseries_records_fast,
+                create_timeseries_dataframe_batched,
+                detect_timeseries_schema,
+                get_spark_session,
+            )
+
             logger = logging.getLogger(__name__)
-            
+
             # Get records (this is already optimized)
             records = self.to_records()
             if not records:
                 return None
-            
+
             # Get or create Spark session
             if spark_session is None:
                 spark_session = get_spark_session()
-            
+
             # Choose processing method based on dataset size and user preference
             if use_batching and len(records) > batch_size:
                 logger.debug(f"Using batched processing for {len(records)} records (batch size: {batch_size})")
@@ -398,16 +403,16 @@ class TimeSeriesResponse(APIResponse[NetworkTimeSeries]):
             else:
                 # Use automatically detected schema for maximum performance (eliminates expensive schema inference)
                 timeseries_schema = detect_timeseries_schema(records)
-                
+
                 # Fast data cleaning with optimized type conversion
                 cleaned_records = clean_timeseries_records_fast(records)
-                
+
                 logger.debug(f"Using auto-detected schema with {len(timeseries_schema.fields)} fields")
                 logger.debug(f"Processed {len(cleaned_records)} records with fast cleaning")
-                
+
                 # Create DataFrame with pre-defined schema for maximum performance
                 return spark_session.createDataFrame(cleaned_records, schema=timeseries_schema)
-                
+
         except ImportError:
             # Log warning but don't raise error to maintain compatibility
             import logging

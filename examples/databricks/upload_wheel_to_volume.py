@@ -3,13 +3,13 @@
 Script to upload a wheel file to a Unity Catalog volume using the Databricks SDK.
 """
 
-import os
 import argparse
-import sys
 import io
+import logging
+import os
+import sys
 
 from databricks.sdk import WorkspaceClient
-import logging
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -28,28 +28,28 @@ def upload_wheel_to_volume(catalog_name, schema_name, volume_name, wheel_file_pa
     try:
         # Initialize the Databricks SDK client
         w = WorkspaceClient()
-        
+
         # Check if wheel file exists
         if not os.path.exists(wheel_file_path):
             raise FileNotFoundError(f"Wheel file not found: {wheel_file_path}")
-        
+
         logger.info(f"Starting upload of wheel file: {wheel_file_path}")
-        
+
         # Read file into bytes
         with open(wheel_file_path, "rb") as f:
             file_bytes = f.read()
         binary_data = io.BytesIO(file_bytes)
-        
+
         # Upload the wheel file to the volume
         wheel_filename = os.path.basename(wheel_file_path)
         volume_file_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/{wheel_filename}"
-        
+
         logger.info(f"Uploading wheel file to: {volume_file_path}")
-        
+
         w.files.upload(volume_file_path, binary_data, overwrite=True)
-        
+
         logger.info(f"Successfully uploaded wheel file to: {volume_file_path}")
-        
+
         # List files in the volume to verify (using correct method from SDK docs)
         try:
             directory_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
@@ -59,9 +59,9 @@ def upload_wheel_to_volume(catalog_name, schema_name, volume_name, wheel_file_pa
                 logger.info(f"  - {file.path}")
         except Exception as e:
             logger.warning(f"Could not list directory contents: {str(e)}")
-        
+
         return volume_file_path
-        
+
     except Exception as e:
         logger.error(f"Error uploading wheel file: {str(e)}")
         raise
@@ -85,45 +85,45 @@ Examples:
   python upload_wheel_to_volume.py -c daveok -s default -v wheels -f /path/to/wheel.whl
         """
     )
-    
+
     parser.add_argument(
         "--catalog", "-c",
         required=True,
         help="Unity Catalog catalog name"
     )
-    
+
     parser.add_argument(
-        "--schema", "-s", 
+        "--schema", "-s",
         required=True,
         help="Schema name within the catalog"
     )
-    
+
     parser.add_argument(
         "--volume", "-v",
         required=True,
         help="Volume name within the schema"
     )
-    
+
     parser.add_argument(
         "--file", "-f",
         required=True,
         help="Path to the wheel file to upload"
     )
-    
+
     args = parser.parse_args()
-    
+
     try:
         volume_path = upload_wheel_to_volume(
-            args.catalog, 
-            args.schema, 
-            args.volume, 
+            args.catalog,
+            args.schema,
+            args.volume,
             args.file
         )
-        print(f"\n✅ Wheel file uploaded successfully!")
+        print("\n✅ Wheel file uploaded successfully!")
         print(f"📁 Location: {volume_path}")
-        print(f"\nTo install in a cluster, use:")
+        print("\nTo install in a cluster, use:")
         print(f"pip install {volume_path}")
-        
+
     except Exception as e:
         print(f"\n❌ Error: {str(e)}")
         sys.exit(1)

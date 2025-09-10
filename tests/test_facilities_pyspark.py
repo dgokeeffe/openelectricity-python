@@ -4,7 +4,6 @@ Tests for facilities PySpark conversion.
 This module contains tests for converting facility data to PySpark DataFrames.
 """
 
-import os
 import pytest
 
 # Check if PySpark is available
@@ -14,7 +13,6 @@ try:
 except ImportError:
     PYSPARK_AVAILABLE = False
 
-from openelectricity import OEClient
 
 
 @pytest.fixture
@@ -31,14 +29,14 @@ def test_facilities_pyspark_conversion(facilities_response):
     """Test that facilities can be converted to PySpark DataFrame."""
     # Test PySpark conversion
     spark_df = facilities_response.to_pyspark()
-    
+
     # Should not return None
     assert spark_df is not None, "PySpark DataFrame should not be None"
-    
+
     # Should have data
     row_count = spark_df.count()
     assert row_count > 0, f"Expected data rows, got {row_count}"
-    
+
     # Should have some essential columns (flexible - at least some should be present)
     essential_columns = ["code", "name", "network_id", "network_region"]
     found_columns = [col for col in essential_columns if col in spark_df.columns]
@@ -48,14 +46,14 @@ def test_facilities_pyspark_conversion(facilities_response):
 @pytest.mark.skipif(not PYSPARK_AVAILABLE, reason="PySpark not available")
 def test_facilities_pyspark_schema(facilities_response):
     """Test that PySpark DataFrame has correct schema."""
-    from pyspark.sql.types import StringType, DoubleType
-    
+    from pyspark.sql.types import DoubleType, StringType
+
     spark_df = facilities_response.to_pyspark()
     assert spark_df is not None, "PySpark DataFrame should not be None"
-    
+
     schema = spark_df.schema
     field_types = {field.name: field.dataType for field in schema.fields}
-    
+
     # Check string fields
     string_fields = ["code", "name", "network_id", "network_region"]
     for field in string_fields:
@@ -63,7 +61,7 @@ def test_facilities_pyspark_schema(facilities_response):
             assert isinstance(field_types[field], StringType), (
                 f"Field {field} should be StringType, got {field_types[field]}"
             )
-    
+
     # Check numeric fields if present
     numeric_fields = ["capacity_registered", "emissions_factor_co2"]
     for field in numeric_fields:
@@ -78,17 +76,17 @@ def test_facilities_pyspark_operations(facilities_response):
     """Test that PySpark operations work on facilities DataFrame."""
     spark_df = facilities_response.to_pyspark()
     assert spark_df is not None, "PySpark DataFrame should not be None"
-    
+
     # Test basic operations
     total_count = spark_df.count()
     assert total_count > 0, "Should have facilities data"
-    
+
     # Test grouping operations
     if "fueltech_id" in spark_df.columns:
         fueltech_counts = spark_df.groupBy("fueltech_id").count()
         fueltech_count = fueltech_counts.count()
         assert fueltech_count > 0, "Should have fuel technology groups"
-    
+
     # Test filtering
     if "network_id" in spark_df.columns:
         nem_facilities = spark_df.filter(spark_df.network_id == "NEM")
@@ -102,14 +100,14 @@ def test_facilities_pyspark_data_integrity(facilities_response):
     # Get pandas DataFrame for comparison
     pandas_df = facilities_response.to_pandas()
     spark_df = facilities_response.to_pyspark()
-    
+
     assert spark_df is not None, "PySpark DataFrame should not be None"
-    
+
     # Compare row counts
     pandas_count = len(pandas_df)
     spark_count = spark_df.count()
     assert pandas_count == spark_count, f"Row count mismatch: pandas={pandas_count}, spark={spark_count}"
-    
+
     # Compare column counts
     pandas_cols = set(pandas_df.columns)
     spark_cols = set(spark_df.columns)
@@ -119,10 +117,10 @@ def test_facilities_pyspark_data_integrity(facilities_response):
 def test_facilities_pandas_conversion(facilities_response):
     """Test that facilities can be converted to pandas DataFrame."""
     pandas_df = facilities_response.to_pandas()
-    
+
     # Should have data
     assert len(pandas_df) > 0, "Pandas DataFrame should have data"
-    
+
     # Should have some essential columns (flexible - at least some should be present)
     essential_columns = ["code", "name", "network_id", "network_region"]
     found_columns = [col for col in essential_columns if col in pandas_df.columns]

@@ -6,10 +6,10 @@ This test validates that the TimestampType conversion and schema alignment
 works correctly with real API data for specific facility metrics.
 """
 
-import os
 import logging
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timedelta, timezone
 
 # Check if PySpark is available
 try:
@@ -18,7 +18,6 @@ try:
 except ImportError:
     PYSPARK_AVAILABLE = False
 
-from openelectricity import OEClient
 from openelectricity.types import DataMetric
 
 # Configure logging to be quiet during tests
@@ -124,7 +123,7 @@ class TestPySparkFacilityDataIntegration:
     @pytest.mark.skipif(not pytest.importorskip("pyspark", reason="PySpark not available"), reason="PySpark not available")
     def test_pyspark_schema_validation(self, openelectricity_client, test_parameters):
         """Test that PySpark DataFrame has correct schema with TimestampType."""
-        from pyspark.sql.types import TimestampType, DoubleType, StringType
+        from pyspark.sql.types import DoubleType, StringType, TimestampType
 
         try:
             response = openelectricity_client.get_facility_data(**test_parameters)
@@ -192,7 +191,7 @@ class TestPySparkFacilityDataIntegration:
         spark_dt = spark_rows[0]["interval"]
 
         # Convert original to UTC and remove timezone for comparison
-        expected_utc = original_dt.astimezone(timezone.utc).replace(tzinfo=None)
+        expected_utc = original_dt.astimezone(UTC).replace(tzinfo=None)
 
         # Validate timezone conversion logic
         if original_dt.tzinfo is not None:
@@ -223,7 +222,9 @@ class TestPySparkFacilityDataIntegration:
     @pytest.mark.skipif(not pytest.importorskip("pyspark", reason="PySpark not available"), reason="PySpark not available")
     def test_temporal_operations(self, openelectricity_client, test_parameters):
         """Test that temporal operations work on TimestampType fields."""
-        from pyspark.sql.functions import hour, date_format, min as spark_min, max as spark_max
+        from pyspark.sql.functions import date_format, hour
+        from pyspark.sql.functions import max as spark_max
+        from pyspark.sql.functions import min as spark_min
 
         try:
             response = openelectricity_client.get_facility_data(**test_parameters)
@@ -273,7 +274,10 @@ class TestPySparkFacilityDataIntegration:
     @pytest.mark.skipif(not pytest.importorskip("pyspark", reason="PySpark not available"), reason="PySpark not available")
     def test_numeric_operations(self, openelectricity_client, test_parameters):
         """Test that numeric operations work on DoubleType fields."""
-        from pyspark.sql.functions import avg, sum as spark_sum, count, min as spark_min, max as spark_max
+        from pyspark.sql.functions import avg, count
+        from pyspark.sql.functions import max as spark_max
+        from pyspark.sql.functions import min as spark_min
+        from pyspark.sql.functions import sum as spark_sum
         from pyspark.sql.types import DoubleType
 
         try:
@@ -357,17 +361,17 @@ class TestPySparkFacilityDataIntegration:
                 date_start=datetime(2025, 8, 19, 21, 30),
                 date_end=datetime(2025, 8, 20, 21, 30),
             )
-            
+
             # If no exception is raised, the response should handle gracefully
             if response:
                 # Should have empty or no data
                 assert len(response.data) == 0, "Invalid facility should return empty data"
-                
+
                 # PySpark conversion should handle empty data gracefully
                 spark_df = response.to_pyspark()
                 if spark_df is not None:
                     assert spark_df.count() == 0, "PySpark DataFrame should be empty for invalid facility"
-                    
+
         except Exception as e:
             # API should raise an exception for invalid parameters
             error_str = str(e).lower()
@@ -391,7 +395,7 @@ def test_full_integration(openelectricity_client, test_parameters):
     try:
         pytest.importorskip("pyspark", reason="PySpark not available")
         spark_df = response.to_pyspark()
-        
+
         assert spark_df is not None, "PySpark conversion should succeed"
         assert spark_df.count() >= 0, "PySpark DataFrame should have data"
         assert len(spark_df.schema.fields) > 0, "PySpark schema should have fields"

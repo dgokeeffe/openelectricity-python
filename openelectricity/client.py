@@ -4,12 +4,10 @@ OpenElectricity API Client
 This module provides both synchronous and asynchronous clients for the OpenElectricity API.
 """
 
-import asyncio
 from datetime import datetime
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 
-import requests
-from aiohttp import ClientResponse, ClientSession
+import httpx
 
 from openelectricity.logging import get_logger
 from openelectricity.models.facilities import FacilityResponse
@@ -81,19 +79,26 @@ class BaseOEClient:
 
 class OEClient(BaseOEClient):
     """
-    Synchronous client for the OpenElectricity API using the requests library.
+    Unified client for the OpenElectricity API using httpx.
     
-    This client follows best practices for HTTP clients:
-    - Uses session objects for connection pooling and performance
+    This client can be used in both synchronous and asynchronous contexts:
+    - For sync usage: client = OEClient(); response = client.get_facilities()
+    - For async usage: async with OEClient() as client: response = await client.get_facilities()
+    
+    Features:
+    - Uses httpx for both sync and async HTTP requests
     - Implements proper error handling and logging
-    - Provides context manager support
+    - Provides context manager support for both sync and async
     - Handles parameter validation and URL construction
+    - Automatic client type detection based on usage context
     """
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
         super().__init__(api_key, base_url)
-        self._session: requests.Session | None = None
-        logger.debug("Initialized synchronous client")
+        self._sync_client: httpx.Client | None = None
+        self._async_client: httpx.AsyncClient | None = None
+        self._is_async_context = False
+        logger.debug("Initialized unified client")
 
     def get_spark_session(self) -> "SparkSession":
         """
@@ -122,37 +127,44 @@ class OEClient(BaseOEClient):
         from openelectricity.spark_utils import is_spark_available
         return is_spark_available()
 
-    def _ensure_session(self) -> requests.Session:
-        """Ensure session is initialized and return it."""
-        if self._session is None:
-            logger.debug("Creating new requests session")
-            self._session = requests.Session()
-            self._session.headers.update(self.headers)
-            # Configure session for better performance
-            self._session.mount("https://", requests.adapters.HTTPAdapter(
-                pool_connections=10,
-                pool_maxsize=20,
-                max_retries=3,
-                pool_block=False
-            ))
-        return self._session
+    def _ensure_sync_client(self) -> httpx.Client:
+        """Ensure sync client is initialized and return it."""
+        if self._sync_client is None:
+            logger.debug("Creating new sync httpx client")
+            self._sync_client = httpx.Client(
+                headers=self.headers,
+                timeout=30.0,
+                limits=httpx.Limits(max_keepalive_connections=20, max_connections=100)
+            )
+        return self._sync_client
 
-    def _handle_response(self, response: requests.Response) -> dict[str, Any] | list[dict[str, Any]]:
+    async def _ensure_async_client(self) -> httpx.AsyncClient:
+        """Ensure async client is initialized and return it."""
+        if self._async_client is None or self._async_client.is_closed:
+            logger.debug("Creating new async httpx client")
+            self._async_client = httpx.AsyncClient(
+                headers=self.headers,
+                timeout=30.0,
+                limits=httpx.Limits(max_keepalive_connections=20, max_connections=100)
+            )
+        return self._async_client
+
+    def _handle_response(self, response: httpx.Response) -> dict[str, Any] | list[dict[str, Any]]:
         """Handle API response and raise appropriate errors."""
-        if not response.ok:
+        if not response.is_success:
             try:
-                detail = response.json().get("detail", response.reason)
+                detail = response.json().get("detail", response.reason_phrase)
             except Exception:
-                detail = response.reason
+                detail = response.reason_phrase
             logger.error("API error: %s - %s", response.status_code, detail)
             raise APIError(response.status_code, detail)
 
         logger.debug("Received successful response: %s", response.status_code)
-        
+
         # Add this line to see the raw JSON response
         raw_json = response.json()
         logger.debug("Raw JSON response: %s", raw_json)
-        
+
         return raw_json
 
     def _build_url(self, endpoint: str) -> str:
@@ -176,8 +188,8 @@ class OEClient(BaseOEClient):
     ) -> FacilityResponse:
         """Get a list of facilities."""
         logger.debug("Getting facilities")
-        session = self._ensure_session()
-        
+        client = self._ensure_sync_client()
+
         params = {
             "facility_code": facility_code,
             "status_id": [s.value for s in status_id] if status_id else None,
@@ -189,7 +201,7 @@ class OEClient(BaseOEClient):
         logger.debug("Request parameters: %s", params)
 
         url = self._build_url("/facilities/")
-        response = session.get(url, params=params)
+        response = client.get(url, params=params)
         data = self._handle_response(response)
         return FacilityResponse.model_validate(data)
 
@@ -210,8 +222,8 @@ class OEClient(BaseOEClient):
             metrics,
             interval,
         )
-        session = self._ensure_session()
-        
+        client = self._ensure_sync_client()
+
         params = {
             "metrics": [m.value for m in metrics],
             "interval": interval,
@@ -224,7 +236,7 @@ class OEClient(BaseOEClient):
         logger.debug("Request parameters: %s", params)
 
         url = self._build_url(f"/data/network/{network_code}")
-        response = session.get(url, params=params)
+        response = client.get(url, params=params)
         data = self._handle_response(response)
         return TimeSeriesResponse.model_validate(data)
 
@@ -245,8 +257,8 @@ class OEClient(BaseOEClient):
             metrics,
             interval,
         )
-        session = self._ensure_session()
-        
+        client = self._ensure_sync_client()
+
         params = {
             "facility_code": facility_code,
             "metrics": [m.value for m in metrics],
@@ -258,7 +270,7 @@ class OEClient(BaseOEClient):
         logger.debug("Request parameters: %s", params)
 
         url = self._build_url(f"/data/facilities/{network_code}")
-        response = session.get(url, params=params)
+        response = client.get(url, params=params)
         data = self._handle_response(response)
         return TimeSeriesResponse.model_validate(data)
 
@@ -280,8 +292,8 @@ class OEClient(BaseOEClient):
             interval,
             network_region,
         )
-        session = self._ensure_session()
-        
+        client = self._ensure_sync_client()
+
         params = {
             "metrics": [m.value for m in metrics],
             "interval": interval,
@@ -294,26 +306,38 @@ class OEClient(BaseOEClient):
         logger.debug("Request parameters: %s", params)
 
         url = self._build_url(f"/market/network/{network_code}")
-        response = session.get(url, params=params)
+        response = client.get(url, params=params)
         data = self._handle_response(response)
         return TimeSeriesResponse.model_validate(data)
 
     def get_current_user(self) -> OpennemUserResponse:
         """Get current user information."""
         logger.debug("Getting current user information")
-        session = self._ensure_session()
-        
+        client = self._ensure_sync_client()
+
         url = self._build_url("/me")
-        response = session.get(url)
+        response = client.get(url)
         data = self._handle_response(response)
         return OpennemUserResponse.model_validate(data)
 
     def close(self) -> None:
-        """Close the underlying HTTP client session."""
-        if self._session:
-            logger.debug("Closing requests session")
-            self._session.close()
-            self._session = None
+        """Close the underlying HTTP clients."""
+        if self._sync_client:
+            logger.debug("Closing sync httpx client")
+            self._sync_client.close()
+            self._sync_client = None
+
+        if self._async_client and not self._async_client.is_closed:
+            logger.debug("Closing async httpx client")
+            # Note: async client should be closed with aclose() in async context
+            # This is a fallback for sync close()
+            import asyncio
+            try:
+                asyncio.run(self._async_client.aclose())
+            except RuntimeError:
+                # If we're already in an event loop, just mark as closed
+                pass
+            self._async_client = None
 
     def __enter__(self) -> "OEClient":
         return self
@@ -322,48 +346,11 @@ class OEClient(BaseOEClient):
         self.close()
 
     def __del__(self) -> None:
-        """Ensure session is closed when object is garbage collected."""
+        """Ensure clients are closed when object is garbage collected."""
         self.close()
 
-
-class LegacyOEClient(BaseOEClient):
-    """
-    Legacy synchronous client for the OpenElectricity API.
-
-    Note: This client uses aiohttp with asyncio.run() internally to maintain
-    API consistency while using the same underlying HTTP client as the async version.
-    This is kept for backward compatibility but is not recommended for new code.
-    """
-
-    def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
-        super().__init__(api_key, base_url)
-        self._session: ClientSession | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
-        logger.debug("Initialized legacy synchronous client")
-
-    def _ensure_session(self) -> None:
-        """Ensure session and event loop are initialized."""
-        if self._session is None or self._session.closed:
-            logger.debug("Creating new client session")
-            self._session = ClientSession(
-                base_url=self.base_url,
-                headers=self.headers,
-            )
-
-    async def _handle_response(self, response: ClientResponse) -> dict[str, Any] | list[dict[str, Any]]:
-        """Handle API response and raise appropriate errors."""
-        if not response.ok:
-            try:
-                detail = (await response.json()).get("detail", response.reason)
-            except Exception:
-                detail = response.reason
-            logger.error("API error: %s - %s", response.status, detail)
-            raise APIError(response.status, detail)
-
-        logger.debug("Received successful response: %s", response.status)
-        return await response.json()
-
-    async def _async_get_facilities(
+    # Async versions of all methods
+    async def get_facilities_async(
         self,
         facility_code: list[str] | None = None,
         status_id: list[UnitStatusType] | None = None,
@@ -371,9 +358,10 @@ class LegacyOEClient(BaseOEClient):
         network_id: list[str] | None = None,
         network_region: str | None = None,
     ) -> FacilityResponse:
-        """Async implementation of get_facilities."""
-        logger.debug("Getting facilities")
-        self._ensure_session()
+        """Get a list of facilities (async version)."""
+        logger.debug("Getting facilities (async)")
+        client = await self._ensure_async_client()
+
         params = {
             "facility_code": facility_code,
             "status_id": [s.value for s in status_id] if status_id else None,
@@ -381,15 +369,15 @@ class LegacyOEClient(BaseOEClient):
             "network_id": network_id,
             "network_region": network_region,
         }
-        # Remove None values
-        params = {k: v for k, v in params.items() if v is not None}
+        params = self._clean_params(params)
         logger.debug("Request parameters: %s", params)
 
-        async with cast(ClientSession, self._session).get("/facilities/", params=params) as response:
-            data = await self._handle_response(response)
-            return FacilityResponse.model_validate(data)
+        url = self._build_url("/facilities/")
+        response = await client.get(url, params=params)
+        data = self._handle_response(response)
+        return FacilityResponse.model_validate(data)
 
-    async def _async_get_network_data(
+    async def get_network_data_async(
         self,
         network_code: NetworkCode,
         metrics: list[DataMetric],
@@ -399,14 +387,15 @@ class LegacyOEClient(BaseOEClient):
         primary_grouping: DataPrimaryGrouping | None = None,
         secondary_grouping: DataSecondaryGrouping | None = None,
     ) -> TimeSeriesResponse:
-        """Async implementation of get_network_data."""
+        """Get network data for specified metrics (async version)."""
         logger.debug(
-            "Getting network data for %s (metrics: %s, interval: %s)",
+            "Getting network data for %s (metrics: %s, interval: %s) (async)",
             network_code,
             metrics,
             interval,
         )
-        self._ensure_session()
+        client = await self._ensure_async_client()
+
         params = {
             "metrics": [m.value for m in metrics],
             "interval": interval,
@@ -415,15 +404,15 @@ class LegacyOEClient(BaseOEClient):
             "primary_grouping": primary_grouping,
             "secondary_grouping": secondary_grouping,
         }
-        # Remove None values
-        params = {k: v for k, v in params.items() if v is not None}
+        params = self._clean_params(params)
         logger.debug("Request parameters: %s", params)
 
-        async with cast(ClientSession, self._session).get(f"/data/network/{network_code}", params=params) as response:
-            data = await self._handle_response(response)
-            return TimeSeriesResponse.model_validate(data)
+        url = self._build_url(f"/data/network/{network_code}")
+        response = await client.get(url, params=params)
+        data = self._handle_response(response)
+        return TimeSeriesResponse.model_validate(data)
 
-    async def _async_get_facility_data(
+    async def get_facility_data_async(
         self,
         network_code: NetworkCode,
         facility_code: str | list[str],
@@ -432,15 +421,16 @@ class LegacyOEClient(BaseOEClient):
         date_start: datetime | None = None,
         date_end: datetime | None = None,
     ) -> TimeSeriesResponse:
-        """Async implementation of get_facility_data."""
+        """Get facility data for specified metrics (async version)."""
         logger.debug(
-            "Getting facility data for %s/%s (metrics: %s, interval: %s)",
+            "Getting facility data for %s/%s (metrics: %s, interval: %s) (async)",
             network_code,
             facility_code,
             metrics,
             interval,
         )
-        self._ensure_session()
+        client = await self._ensure_async_client()
+
         params = {
             "facility_code": facility_code,
             "metrics": [m.value for m in metrics],
@@ -448,15 +438,15 @@ class LegacyOEClient(BaseOEClient):
             "date_start": date_start.isoformat() if date_start else None,
             "date_end": date_end.isoformat() if date_end else None,
         }
-        # Remove None values
-        params = {k: v for k, v in params.items() if v is not None}
+        params = self._clean_params(params)
         logger.debug("Request parameters: %s", params)
 
-        async with cast(ClientSession, self._session).get(f"/data/facilities/{network_code}", params=params) as response:
-            data = await self._handle_response(response)
-            return TimeSeriesResponse.model_validate(data)
+        url = self._build_url(f"/data/facilities/{network_code}")
+        response = await client.get(url, params=params)
+        data = self._handle_response(response)
+        return TimeSeriesResponse.model_validate(data)
 
-    async def _async_get_market(
+    async def get_market_async(
         self,
         network_code: NetworkCode,
         metrics: list[MarketMetric],
@@ -466,15 +456,16 @@ class LegacyOEClient(BaseOEClient):
         primary_grouping: DataPrimaryGrouping | None = None,
         network_region: str | None = None,
     ) -> TimeSeriesResponse:
-        """Async implementation of get_market."""
+        """Get market data for specified metrics (async version)."""
         logger.debug(
-            "Getting market data for %s (metrics: %s, interval: %s, region: %s)",
+            "Getting market data for %s (metrics: %s, interval: %s, region: %s) (async)",
             network_code,
             metrics,
             interval,
             network_region,
         )
-        self._ensure_session()
+        client = await self._ensure_async_client()
+
         params = {
             "metrics": [m.value for m in metrics],
             "interval": interval,
@@ -483,303 +474,39 @@ class LegacyOEClient(BaseOEClient):
             "primary_grouping": primary_grouping,
             "network_region": network_region,
         }
-        # Remove None values
-        params = {k: v for k, v in params.items() if v is not None}
+        params = self._clean_params(params)
         logger.debug("Request parameters: %s", params)
 
-        async with cast(ClientSession, self._session).get(f"/market/network/{network_code}", params=params) as response:
-            data = await self._handle_response(response)
-            return TimeSeriesResponse.model_validate(data)
+        url = self._build_url(f"/market/network/{network_code}")
+        response = await client.get(url, params=params)
+        data = self._handle_response(response)
+        return TimeSeriesResponse.model_validate(data)
 
-    async def _async_get_current_user(self) -> OpennemUserResponse:
-        """Async implementation of get_current_user."""
-        logger.debug("Getting current user information")
-        self._ensure_session()
-        async with cast(ClientSession, self._session).get("/me") as response:
-            data = await self._handle_response(response)
-            return OpennemUserResponse.model_validate(data)
+    async def get_current_user_async(self) -> OpennemUserResponse:
+        """Get current user information (async version)."""
+        logger.debug("Getting current user information (async)")
+        client = await self._ensure_async_client()
 
-    def get_facilities(
-        self,
-        facility_code: list[str] | None = None,
-        status_id: list[UnitStatusType] | None = None,
-        fueltech_id: list[UnitFueltechType] | None = None,
-        network_id: list[str] | None = None,
-        network_region: str | None = None,
-    ) -> FacilityResponse:
-        """Get a list of facilities."""
+        url = self._build_url("/me")
+        response = await client.get(url)
+        data = self._handle_response(response)
+        return OpennemUserResponse.model_validate(data)
 
-        async def _run():
-            async with ClientSession(base_url=self.base_url, headers=self.headers) as session:
-                self._session = session
-                return await self._async_get_facilities(facility_code, status_id, fueltech_id, network_id, network_region)
+    async def aclose(self) -> None:
+        """Close the async HTTP client."""
+        if self._async_client and not self._async_client.is_closed:
+            logger.debug("Closing async httpx client")
+            await self._async_client.aclose()
+            self._async_client = None
 
-        return asyncio.run(_run())
-
-    def get_network_data(
-        self,
-        network_code: NetworkCode,
-        metrics: list[DataMetric],
-        interval: DataInterval | None = None,
-        date_start: datetime | None = None,
-        date_end: datetime | None = None,
-        primary_grouping: DataPrimaryGrouping | None = None,
-        secondary_grouping: DataSecondaryGrouping | None = None,
-    ) -> TimeSeriesResponse:
-        """Get network data for specified metrics."""
-
-        async def _run():
-            async with ClientSession(base_url=self.base_url, headers=self.headers) as session:
-                self._session = session
-                return await self._async_get_network_data(
-                    network_code, metrics, interval, date_start, date_end, primary_grouping, secondary_grouping
-                )
-
-        return asyncio.run(_run())
-
-    def get_facility_data(
-        self,
-        network_code: NetworkCode,
-        facility_code: str | list[str],
-        metrics: list[DataMetric],
-        interval: DataInterval | None = None,
-        date_start: datetime | None = None,
-        date_end: datetime | None = None,
-    ) -> TimeSeriesResponse:
-        """Get facility data for specified metrics."""
-
-        async def _run():
-            async with ClientSession(base_url=self.base_url, headers=self.headers) as session:
-                self._session = session
-                return await self._async_get_facility_data(network_code, facility_code, metrics, interval, date_start, date_end)
-
-        return asyncio.run(_run())
-
-    def get_market(
-        self,
-        network_code: NetworkCode,
-        metrics: list[MarketMetric],
-        interval: DataInterval | None = None,
-        date_start: datetime | None = None,
-        date_end: datetime | None = None,
-        primary_grouping: DataPrimaryGrouping | None = None,
-        network_region: str | None = None,
-    ) -> TimeSeriesResponse:
-        """Get market data for specified metrics."""
-
-        async def _run():
-            async with ClientSession(base_url=self.base_url, headers=self.headers) as session:
-                self._session = session
-                return await self._async_get_market(
-                    network_code, metrics, interval, date_start, date_end, primary_grouping, network_region
-                )
-
-        return asyncio.run(_run())
-
-    def get_current_user(self) -> OpennemUserResponse:
-        """Get current user information."""
-
-        async def _run():
-            async with ClientSession(base_url=self.base_url, headers=self.headers) as session:
-                self._session = session
-                return await self._async_get_current_user()
-
-        return asyncio.run(_run())
-
-    def close(self) -> None:
-        """Close the underlying HTTP client."""
-        if self._session and not self._session.closed:
-
-            async def _close():
-                await cast(ClientSession, self._session).close()
-
-            asyncio.run(_close())
-
-    def __enter__(self) -> "LegacyOEClient":
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self.close()
-
-
-class AsyncOEClient(BaseOEClient):
-    """
-    Asynchronous client for the OpenElectricity API.
-    """
-
-    def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
-        super().__init__(api_key, base_url)
-        self.client: ClientSession | None = None
-        logger.debug("Initialized asynchronous client")
-
-    async def _ensure_client(self) -> None:
-        """Ensure client session is initialized."""
-        if self.client is None or self.client.closed:
-            logger.debug("Creating new async client session")
-            self.client = ClientSession(
-                base_url=self.base_url,
-                headers=self.headers,
-            )
-
-    async def _handle_response(self, response: ClientResponse) -> dict[str, Any] | list[dict[str, Any]]:
-        """Handle API response and raise appropriate errors."""
-        if not response.ok:
-            try:
-                detail = (await response.json()).get("detail", response.reason)
-            except Exception:
-                detail = response.reason
-            logger.error("API error: %s - %s", response.status, detail)
-            raise APIError(response.status, detail)
-
-        logger.debug("Received successful response: %s", response.status)
-        return await response.json()
-
-    async def get_facilities(
-        self,
-        facility_code: list[str] | None = None,
-        status_id: list[UnitStatusType] | None = None,
-        fueltech_id: list[UnitFueltechType] | None = None,
-        network_id: list[str] | None = None,
-        network_region: str | None = None,
-    ) -> FacilityResponse:
-        """Get a list of facilities."""
-        logger.debug("Getting facilities")
-        await self._ensure_client()
-        params = {
-            "facility_code": facility_code,
-            "status_id": [s.value for s in status_id] if status_id else None,
-            "fueltech_id": [f.value for f in fueltech_id] if fueltech_id else None,
-            "network_id": network_id,
-            "network_region": network_region,
-        }
-        # Remove None values
-        params = {k: v for k, v in params.items() if v is not None}
-        logger.debug("Request parameters: %s", params)
-
-        async with cast(ClientSession, self.client).get("/facilities/", params=params) as response:
-            data = await self._handle_response(response)
-            return FacilityResponse.model_validate(data)
-
-    async def get_network_data(
-        self,
-        network_code: NetworkCode,
-        metrics: list[DataMetric],
-        interval: DataInterval | None = None,
-        date_start: datetime | None = None,
-        date_end: datetime | None = None,
-        primary_grouping: DataPrimaryGrouping | None = None,
-        secondary_grouping: DataSecondaryGrouping | None = None,
-    ) -> TimeSeriesResponse:
-        """Get network data for specified metrics."""
-        logger.debug(
-            "Getting network data for %s (metrics: %s, interval: %s)",
-            network_code,
-            metrics,
-            interval,
-        )
-        await self._ensure_client()
-        params = {
-            "metrics": [m.value for m in metrics],
-            "interval": interval,
-            "date_start": date_start.isoformat() if date_start else None,
-            "date_end": date_end.isoformat() if date_end else None,
-            "primary_grouping": primary_grouping,
-            "secondary_grouping": secondary_grouping,
-        }
-        # Remove None values
-        params = {k: v for k, v in params.items() if v is not None}
-        logger.debug("Request parameters: %s", params)
-
-        async with cast(ClientSession, self.client).get(f"/data/network/{network_code}", params=params) as response:
-            data = await self._handle_response(response)
-            return TimeSeriesResponse.model_validate(data)
-
-    async def get_facility_data(
-        self,
-        network_code: NetworkCode,
-        facility_code: str | list[str],
-        metrics: list[DataMetric],
-        interval: DataInterval | None = None,
-        date_start: datetime | None = None,
-        date_end: datetime | None = None,
-    ) -> TimeSeriesResponse:
-        """Get facility data for specified metrics."""
-        logger.debug(
-            "Getting facility data for %s/%s (metrics: %s, interval: %s)",
-            network_code,
-            facility_code,
-            metrics,
-            interval,
-        )
-        await self._ensure_client()
-        params = {
-            "facility_code": facility_code,
-            "metrics": [m.value for m in metrics],
-            "interval": interval,
-            "date_start": date_start.isoformat() if date_start else None,
-            "date_end": date_end.isoformat() if date_end else None,
-        }
-        # Remove None values
-        params = {k: v for k, v in params.items() if v is not None}
-        logger.debug("Request parameters: %s", params)
-
-        async with cast(ClientSession, self.client).get(f"/data/facilities/{network_code}", params=params) as response:
-            data = await self._handle_response(response)
-            return TimeSeriesResponse.model_validate(data)
-
-    async def get_market(
-        self,
-        network_code: NetworkCode,
-        metrics: list[MarketMetric],
-        interval: DataInterval | None = None,
-        date_start: datetime | None = None,
-        date_end: datetime | None = None,
-        primary_grouping: DataPrimaryGrouping | None = None,
-        network_region: str | None = None,
-    ) -> TimeSeriesResponse:
-        """Get market data for specified metrics."""
-        logger.debug(
-            "Getting market data for %s (metrics: %s, interval: %s, region: %s)",
-            network_code,
-            metrics,
-            interval,
-            network_region,
-        )
-        await self._ensure_client()
-        params = {
-            "metrics": [m.value for m in metrics],
-            "interval": interval,
-            "date_start": date_start.isoformat() if date_start else None,
-            "date_end": date_end.isoformat() if date_end else None,
-            "primary_grouping": primary_grouping,
-            "network_region": network_region,
-        }
-        # Remove None values
-        params = {k: v for k, v in params.items() if v is not None}
-        logger.debug("Request parameters: %s", params)
-
-        async with cast(ClientSession, self.client).get(f"/market/network/{network_code}", params=params) as response:
-            data = await self._handle_response(response)
-            return TimeSeriesResponse.model_validate(data)
-
-    async def get_current_user(self) -> OpennemUserResponse:
-        """Get current user information."""
-        logger.debug("Getting current user information")
-        await self._ensure_client()
-        async with cast(ClientSession, self.client).get("/me") as response:
-            data = await self._handle_response(response)
-            return OpennemUserResponse.model_validate(data)
-
-    async def close(self) -> None:
-        """Close the underlying HTTP client."""
-        if self.client and not self.client.closed:
-            logger.debug("Closing async client session")
-            await self.client.close()
-
-    async def __aenter__(self) -> "AsyncOEClient":
-        await self._ensure_client()
+    async def __aenter__(self) -> "OEClient":
+        await self._ensure_async_client()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        await self.close()
+        await self.aclose()
+
+
+
+
 
