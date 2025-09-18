@@ -133,8 +133,15 @@ class OEClient(BaseOEClient):
             logger.debug("Creating new sync httpx client")
             self._sync_client = httpx.Client(
                 headers=self.headers,
-                timeout=30.0,
-                limits=httpx.Limits(max_keepalive_connections=20, max_connections=100)
+                timeout=httpx.Timeout(10.0, connect=5.0, read=30.0),
+                limits=httpx.Limits(
+                    max_keepalive_connections=50,  # Increased for better connection reuse
+                    max_connections=200,  # Increased for higher concurrency
+                    keepalive_expiry=30.0  # Keep connections alive longer
+                ),
+                http2=True,  # Enable HTTP/2 for better performance
+                follow_redirects=True,
+                verify=True
             )
         return self._sync_client
 
@@ -144,8 +151,15 @@ class OEClient(BaseOEClient):
             logger.debug("Creating new async httpx client")
             self._async_client = httpx.AsyncClient(
                 headers=self.headers,
-                timeout=30.0,
-                limits=httpx.Limits(max_keepalive_connections=20, max_connections=100)
+                timeout=httpx.Timeout(10.0, connect=5.0, read=30.0),
+                limits=httpx.Limits(
+                    max_keepalive_connections=50,  # Increased for better connection reuse
+                    max_connections=200,  # Increased for higher concurrency
+                    keepalive_expiry=30.0  # Keep connections alive longer
+                ),
+                http2=True,  # Enable HTTP/2 for better performance
+                follow_redirects=True,
+                verify=True
             )
         return self._async_client
 
@@ -177,6 +191,22 @@ class OEClient(BaseOEClient):
     def _clean_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """Remove None values from parameters."""
         return {k: v for k, v in params.items() if v is not None}
+
+    def preload_client(self) -> None:
+        """
+        Preload the sync client to avoid initialization overhead on first request.
+        This is particularly useful for performance-critical applications.
+        """
+        self._ensure_sync_client()
+        logger.debug("Preloaded sync client for better performance")
+
+    async def preload_async_client(self) -> None:
+        """
+        Preload the async client to avoid initialization overhead on first request.
+        This is particularly useful for performance-critical applications.
+        """
+        await self._ensure_async_client()
+        logger.debug("Preloaded async client for better performance")
 
     def get_facilities(
         self,

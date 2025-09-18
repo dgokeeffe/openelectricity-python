@@ -122,6 +122,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "integration: marks integration tests"
     )
+    config.addinivalue_line(
+        "markers", "performance: marks tests as performance benchmarks"
+    )
 
 """
 Pytest configuration and shared fixtures for the OpenElectricity test suite.
