@@ -20,7 +20,7 @@ def configure_logging() -> None:
     root_logger.handlers = []
 
     # Set level based on environment
-    level = logging.DEBUG if settings.is_development else logging.INFO
+    level = logging.INFO if settings.is_development else logging.WARNING
     root_logger.setLevel(level)
 
     # Create console handler
