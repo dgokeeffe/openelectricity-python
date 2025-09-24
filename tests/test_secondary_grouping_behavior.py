@@ -441,3 +441,9 @@ class TestSecondaryGroupingBehavior:
                 # All fueltech names should be non-empty
                 assert all(len(name) > 0 for name in fueltech_names)
                 print("All fueltech names are non-empty")
+
+
+
+
+
+

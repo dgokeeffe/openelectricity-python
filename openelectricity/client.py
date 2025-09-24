@@ -9,6 +9,23 @@ from typing import Any, TypeVar
 
 import httpx
 
+from openelectricity.exceptions import (
+    APIError,
+    AuthenticationError,
+    CircuitBreaker,
+    CircuitBreakerOpenError,
+    ClientError,
+    NetworkError,
+    OpenElectricityError,
+    RateLimitError,
+    RetryConfig,
+    ServerError,
+    TimeoutError,
+    classify_httpx_error,
+    classify_response_error,
+    is_retryable_error,
+    retry_with_config,
+)
 from openelectricity.logging import get_logger
 from openelectricity.models.facilities import FacilityResponse
 from openelectricity.models.timeseries import TimeSeriesResponse
@@ -29,21 +46,6 @@ T = TypeVar("T")
 logger = get_logger("client")
 
 
-class OpenElectricityError(Exception):
-    """Base exception for OpenElectricity API errors."""
-
-    pass
-
-
-class APIError(OpenElectricityError):
-    """Exception raised for API errors."""
-
-    def __init__(self, status_code: int, detail: str):
-        self.status_code = status_code
-        self.detail = detail
-        super().__init__(f"API Error {status_code}: {detail}")
-
-
 class BaseOEClient:
     """
     Base client for the OpenElectricity API.
@@ -52,9 +54,17 @@ class BaseOEClient:
         api_key: Optional API key for authentication. If not provided, will look for
                 OPENELECTRICITY_API_KEY environment variable.
         base_url: Optional base URL for the API. Defaults to production API.
+        retry_config: Optional retry configuration for failed requests.
+        enable_circuit_breaker: Whether to enable circuit breaker pattern.
     """
 
-    def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        retry_config: RetryConfig | None = None,
+        enable_circuit_breaker: bool = True,
+    ) -> None:
         # Ensure base_url has a trailing slash for aiohttp ClientSession
         if base_url:
             self.base_url = base_url.rstrip("/") + "/"
@@ -74,6 +84,13 @@ class BaseOEClient:
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+        
+        # Configure retry behavior
+        self.retry_config = retry_config or RetryConfig()
+        
+        # Configure circuit breaker
+        self.circuit_breaker = CircuitBreaker() if enable_circuit_breaker else None
+        
         logger.debug("Initialized client with base URL: %s", self.base_url)
 
 
@@ -93,8 +110,14 @@ class OEClient(BaseOEClient):
     - Automatic client type detection based on usage context
     """
 
-    def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
-        super().__init__(api_key, base_url)
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        retry_config: RetryConfig | None = None,
+        enable_circuit_breaker: bool = True,
+    ) -> None:
+        super().__init__(api_key, base_url, retry_config, enable_circuit_breaker)
         self._sync_client: httpx.Client | None = None
         self._async_client: httpx.AsyncClient | None = None
         self._is_async_context = False
@@ -166,12 +189,9 @@ class OEClient(BaseOEClient):
     def _handle_response(self, response: httpx.Response) -> dict[str, Any] | list[dict[str, Any]]:
         """Handle API response and raise appropriate errors."""
         if not response.is_success:
-            try:
-                detail = response.json().get("detail", response.reason_phrase)
-            except Exception:
-                detail = response.reason_phrase
-            logger.error("API error: %s - %s", response.status_code, detail)
-            raise APIError(response.status_code, detail)
+            error = classify_response_error(response)
+            logger.error("API error: %s - %s", response.status_code, error)
+            raise error
 
         logger.debug("Received successful response: %s", response.status_code)
 
@@ -191,6 +211,94 @@ class OEClient(BaseOEClient):
     def _clean_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """Remove None values from parameters."""
         return {k: v for k, v in params.items() if v is not None}
+
+    def _make_request_with_retry(
+        self,
+        method: str,
+        url: str,
+        params: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """
+        Make HTTP request with retry logic and circuit breaker protection.
+        
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Request URL
+            params: Query parameters
+            **kwargs: Additional arguments for httpx request
+            
+        Returns:
+            HTTP response
+            
+        Raises:
+            Various OpenElectricity exceptions based on error type
+        """
+        def _make_request() -> httpx.Response:
+            client = self._ensure_sync_client()
+            
+            try:
+                response = client.request(method, url, params=params, **kwargs)
+                return response
+            except httpx.HTTPError as e:
+                # Classify httpx errors into our error types
+                error = classify_httpx_error(e)
+                logger.error("HTTP error during request: %s", error)
+                raise error
+        
+        # Apply circuit breaker if enabled
+        if self.circuit_breaker:
+            try:
+                return self.circuit_breaker.call(_make_request)
+            except CircuitBreakerOpenError:
+                logger.error("Circuit breaker is open, request blocked")
+                raise
+        else:
+            return _make_request()
+
+    async def _make_request_with_retry_async(
+        self,
+        method: str,
+        url: str,
+        params: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """
+        Make async HTTP request with retry logic and circuit breaker protection.
+        
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Request URL
+            params: Query parameters
+            **kwargs: Additional arguments for httpx request
+            
+        Returns:
+            HTTP response
+            
+        Raises:
+            Various OpenElectricity exceptions based on error type
+        """
+        async def _make_request() -> httpx.Response:
+            client = await self._ensure_async_client()
+            
+            try:
+                response = await client.request(method, url, params=params, **kwargs)
+                return response
+            except httpx.HTTPError as e:
+                # Classify httpx errors into our error types
+                error = classify_httpx_error(e)
+                logger.error("HTTP error during async request: %s", error)
+                raise error
+        
+        # Apply circuit breaker if enabled
+        if self.circuit_breaker:
+            try:
+                return self.circuit_breaker.call(_make_request)
+            except CircuitBreakerOpenError:
+                logger.error("Circuit breaker is open, async request blocked")
+                raise
+        else:
+            return await _make_request()
 
     def preload_client(self) -> None:
         """
@@ -218,8 +326,7 @@ class OEClient(BaseOEClient):
     ) -> FacilityResponse:
         """Get a list of facilities."""
         logger.debug("Getting facilities")
-        client = self._ensure_sync_client()
-
+        
         params = {
             "facility_code": facility_code,
             "status_id": [s.value for s in status_id] if status_id else None,
@@ -231,9 +338,20 @@ class OEClient(BaseOEClient):
         logger.debug("Request parameters: %s", params)
 
         url = self._build_url("/facilities/")
-        response = client.get(url, params=params)
-        data = self._handle_response(response)
-        return FacilityResponse.model_validate(data)
+        
+        # Apply retry decorator
+        retry_decorator = retry_with_config(
+            self.retry_config,
+            retryable_exceptions=(ServerError, NetworkError, TimeoutError, RateLimitError),
+        )
+        
+        @retry_decorator
+        def _make_request() -> FacilityResponse:
+            response = self._make_request_with_retry("GET", url, params=params)
+            data = self._handle_response(response)
+            return FacilityResponse.model_validate(data)
+        
+        return _make_request()
 
     def get_network_data(
         self,
@@ -252,8 +370,7 @@ class OEClient(BaseOEClient):
             metrics,
             interval,
         )
-        client = self._ensure_sync_client()
-
+        
         params = {
             "metrics": [m.value for m in metrics],
             "interval": interval,
@@ -266,9 +383,20 @@ class OEClient(BaseOEClient):
         logger.debug("Request parameters: %s", params)
 
         url = self._build_url(f"/data/network/{network_code}")
-        response = client.get(url, params=params)
-        data = self._handle_response(response)
-        return TimeSeriesResponse.model_validate(data)
+        
+        # Apply retry decorator
+        retry_decorator = retry_with_config(
+            self.retry_config,
+            retryable_exceptions=(ServerError, NetworkError, TimeoutError, RateLimitError),
+        )
+        
+        @retry_decorator
+        def _make_request() -> TimeSeriesResponse:
+            response = self._make_request_with_retry("GET", url, params=params)
+            data = self._handle_response(response)
+            return TimeSeriesResponse.model_validate(data)
+        
+        return _make_request()
 
     def get_facility_data(
         self,
@@ -390,8 +518,7 @@ class OEClient(BaseOEClient):
     ) -> FacilityResponse:
         """Get a list of facilities (async version)."""
         logger.debug("Getting facilities (async)")
-        client = await self._ensure_async_client()
-
+        
         params = {
             "facility_code": facility_code,
             "status_id": [s.value for s in status_id] if status_id else None,
@@ -403,9 +530,20 @@ class OEClient(BaseOEClient):
         logger.debug("Request parameters: %s", params)
 
         url = self._build_url("/facilities/")
-        response = await client.get(url, params=params)
-        data = self._handle_response(response)
-        return FacilityResponse.model_validate(data)
+        
+        # Apply retry decorator
+        retry_decorator = retry_with_config(
+            self.retry_config,
+            retryable_exceptions=(ServerError, NetworkError, TimeoutError, RateLimitError),
+        )
+        
+        @retry_decorator
+        async def _make_request() -> FacilityResponse:
+            response = await self._make_request_with_retry_async("GET", url, params=params)
+            data = self._handle_response(response)
+            return FacilityResponse.model_validate(data)
+        
+        return await _make_request()
 
     async def get_network_data_async(
         self,

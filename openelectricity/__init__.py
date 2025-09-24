@@ -5,12 +5,34 @@ This package provides a Python client for interacting with the OpenElectricity A
 """
 
 from openelectricity.client import OEClient
+from openelectricity.exceptions import (
+    APIError,
+    AuthenticationError,
+    ClientError,
+    NetworkError,
+    OpenElectricityError,
+    RateLimitError,
+    RetryConfig,
+    ServerError,
+    TimeoutError,
+)
 
 __name__ = "openelectricity"
 
 __version__ = "0.10.0"
 
-__all__ = ["OEClient"]
+__all__ = [
+    "OEClient",
+    "OpenElectricityError",
+    "APIError",
+    "AuthenticationError",
+    "ClientError",
+    "NetworkError",
+    "RateLimitError",
+    "ServerError",
+    "TimeoutError",
+    "RetryConfig",
+]
 
 # Optional imports for styling (won't fail if dependencies are missing)
 # We don't actually import the module here, just expose it conditionally
