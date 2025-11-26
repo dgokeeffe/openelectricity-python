@@ -5,6 +5,7 @@ This module provides both synchronous and asynchronous clients for the OpenElect
 """
 
 import asyncio
+import os
 from datetime import datetime
 from typing import Any, TypeVar, cast
 
@@ -15,7 +16,6 @@ from openelectricity.logging import get_logger
 from openelectricity.models.facilities import FacilityResponse
 from openelectricity.models.timeseries import TimeSeriesResponse
 from openelectricity.models.user import OpennemUserResponse
-from openelectricity.settings_schema import settings
 from openelectricity.types import (
     DataInterval,
     DataMetric,
@@ -62,10 +62,11 @@ class BaseOEClient:
         if base_url:
             self.base_url = base_url.rstrip("/") + "/"
         else:
-            self.base_url = settings.base_url
+            self.base_url = os.getenv("OPENELECTRICITY_API_URL", "https://api.openelectricity.org.au/v4/")
             if not self.base_url.endswith("/"):
                 self.base_url += "/"
-        self.api_key = api_key or settings.api_key
+
+        self.api_key = api_key or os.getenv("OPENELECTRICITY_API_KEY")
 
         if not self.api_key:
             raise OpenElectricityError(
@@ -355,11 +356,11 @@ class LegacyOEClient(BaseOEClient):
         """Handle API response and raise appropriate errors."""
         if not response.ok:
             try:
-                detail = (await response.json()).get("detail", response.reason)
+                detail = (await response.json()).get("detail", response.reason or "Unknown error")
             except Exception:
-                detail = response.reason
+                detail = response.reason or "Unknown error"
             logger.error("API error: %s - %s", response.status, detail)
-            raise APIError(response.status, detail or "")
+            raise APIError(response.status, detail)
 
         logger.debug("Received successful response: %s", response.status)
         return await response.json()
@@ -678,9 +679,9 @@ class AsyncOEClient(BaseOEClient):
         """Handle API response and raise appropriate errors."""
         if not response.ok:
             try:
-                detail = (await response.json()).get("detail", response.reason)
+                detail = (await response.json()).get("detail", response.reason or "Unknown error")
             except Exception:
-                detail = response.reason
+                detail = response.reason or "Unknown error"
             logger.error("API error: %s - %s", response.status, detail)
             raise APIError(response.status, detail)
 
