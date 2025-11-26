@@ -216,16 +216,33 @@ def get_market_data(
             # Convert to Spark DataFrame using native to_pandas method
             pd_df = response.to_pandas()
             units = response.get_metric_units()
+            
+            # Debug logging to check data
+            logger.info(f"DataFrame shape: {pd_df.shape}")
+            logger.info(f"DataFrame columns: {pd_df.columns.tolist()}")
+            logger.info(f"Units mapping: {units}")
+            logger.info(f"Null counts: {pd_df.isnull().sum().to_dict()}")
+            logger.info(f"Sample data (first 3 rows):\n{pd_df.head(3)}")
+            
+            # Check if demand_energy column exists and has data
+            if 'demand_energy' in pd_df.columns:
+                non_null_count = pd_df['demand_energy'].notna().sum()
+                logger.info(f"demand_energy: {non_null_count}/{len(pd_df)} non-null values")
+                if non_null_count > 0:
+                    logger.info(f"demand_energy range: {pd_df['demand_energy'].min()} to {pd_df['demand_energy'].max()}")
+            else:
+                logger.warning("demand_energy column not found in DataFrame!")
+            
             spark = _get_spark()
             spark_df = spark.createDataFrame(pd_df)
             
             # Rename columns to be more descriptive using PySpark operations
             spark_df = spark_df.withColumnRenamed('price', 'price_dollar_MWh')
             spark_df = spark_df.withColumnRenamed('demand', 'demand_MW')
-            spark_df = spark_df.withColumnRenamed('demand_energy', 'demand_energy_GWh')
+            spark_df = spark_df.withColumnRenamed('demand_energy', 'demand_energy_MWh')
             
             
-            logger.info(f"Successfully fetched market data records")
+            logger.info(f"Successfully fetched {spark_df.count()} market data records")
             return spark_df
             
     except Exception as e:

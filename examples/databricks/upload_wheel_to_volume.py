@@ -9,11 +9,64 @@ import sys
 import io
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import VolumeType
 import logging
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+def ensure_volume_exists(w, catalog_name, schema_name, volume_name):
+    """
+    Ensure that the catalog, schema, and volume exist. Create them if they don't.
+    
+    Args:
+        w: WorkspaceClient instance
+        catalog_name (str): The Unity Catalog catalog name
+        schema_name (str): The schema name within the catalog
+        volume_name (str): The volume name within the schema
+    """
+    # Check/create catalog
+    try:
+        w.catalogs.get(catalog_name)
+        logger.info(f"Catalog '{catalog_name}' exists")
+    except Exception:
+        logger.info(f"Catalog '{catalog_name}' not found, creating...")
+        try:
+            w.catalogs.create(name=catalog_name)
+            logger.info(f"Created catalog '{catalog_name}'")
+        except Exception as e:
+            logger.warning(f"Could not create catalog: {str(e)}")
+    
+    # Check/create schema
+    try:
+        w.schemas.get(f"{catalog_name}.{schema_name}")
+        logger.info(f"Schema '{catalog_name}.{schema_name}' exists")
+    except Exception:
+        logger.info(f"Schema '{catalog_name}.{schema_name}' not found, creating...")
+        try:
+            w.schemas.create(name=schema_name, catalog_name=catalog_name)
+            logger.info(f"Created schema '{catalog_name}.{schema_name}'")
+        except Exception as e:
+            logger.warning(f"Could not create schema: {str(e)}")
+    
+    # Check/create volume
+    try:
+        w.volumes.read(f"{catalog_name}.{schema_name}.{volume_name}")
+        logger.info(f"Volume '{catalog_name}.{schema_name}.{volume_name}' exists")
+    except Exception:
+        logger.info(f"Volume '{catalog_name}.{schema_name}.{volume_name}' not found, creating...")
+        try:
+            w.volumes.create(
+                catalog_name=catalog_name,
+                schema_name=schema_name,
+                name=volume_name,
+                volume_type=VolumeType.MANAGED
+            )
+            logger.info(f"Created volume '{catalog_name}.{schema_name}.{volume_name}'")
+        except Exception as e:
+            logger.error(f"Could not create volume: {str(e)}")
+            raise
 
 def upload_wheel_to_volume(catalog_name, schema_name, volume_name, wheel_file_path):
     """
@@ -29,9 +82,16 @@ def upload_wheel_to_volume(catalog_name, schema_name, volume_name, wheel_file_pa
         # Initialize the Databricks SDK client
         w = WorkspaceClient()
         
+        # Log workspace information
+        workspace_url = w.config.host
+        logger.info(f"Connected to Databricks workspace: {workspace_url}")
+        
         # Check if wheel file exists
         if not os.path.exists(wheel_file_path):
             raise FileNotFoundError(f"Wheel file not found: {wheel_file_path}")
+        
+        # Ensure volume exists
+        ensure_volume_exists(w, catalog_name, schema_name, volume_name)
         
         logger.info(f"Starting upload of wheel file: {wheel_file_path}")
         
@@ -113,6 +173,10 @@ Examples:
     args = parser.parse_args()
     
     try:
+        # Get workspace URL for display
+        w = WorkspaceClient()
+        workspace_url = w.config.host
+        
         volume_path = upload_wheel_to_volume(
             args.catalog, 
             args.schema, 
@@ -120,6 +184,7 @@ Examples:
             args.file
         )
         print(f"\n✅ Wheel file uploaded successfully!")
+        print(f"🌐 Workspace: {workspace_url}")
         print(f"📁 Location: {volume_path}")
         print(f"\nTo install in a cluster, use:")
         print(f"pip install {volume_path}")

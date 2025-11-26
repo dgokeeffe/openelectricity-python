@@ -162,7 +162,7 @@ class OEClient(BaseOEClient):
         # Ensure endpoint starts with / and remove any double slashes
         if not endpoint.startswith('/'):
             endpoint = '/' + endpoint
-        return f"{self.base_url.rstrip('/')}/v4{endpoint}"
+        return f"{self.base_url.rstrip('/')}{endpoint}"
 
     def _clean_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """Remove None values from parameters."""
