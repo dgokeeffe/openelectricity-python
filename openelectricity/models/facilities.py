@@ -127,6 +127,8 @@ class FacilityResponse(APIResponse[Facility]):
             - network_id: str
             - network_region: str
             - description: str
+            - latitude: float
+            - longitude: float
             - unit_code: str
             - fueltech_id: str
             - status_id: str
@@ -151,6 +153,11 @@ class FacilityResponse(APIResponse[Facility]):
             network_id = facility_dict.get('network_id')
             network_region = facility_dict.get('network_region')
             description = facility_dict.get('description')
+            
+            # Extract location data
+            location = facility_dict.get('location')
+            facility_lat = location.get('lat') if location else None
+            facility_lng = location.get('lng') if location else None
             
             # Process each unit in the facility
             units = facility_dict.get('units', [])
@@ -180,6 +187,8 @@ class FacilityResponse(APIResponse[Facility]):
                     "network_id": network_id,
                     "network_region": network_region,
                     "description": description,
+                    "latitude": facility_lat,
+                    "longitude": facility_lng,
                     "unit_code": unit_dict.get('code'),
                     "fueltech_id": fueltech_value,
                     "status_id": status_value,
@@ -238,10 +247,19 @@ class FacilityResponse(APIResponse[Facility]):
                                 # Create combined record
                                 record = {}
                                 
-                                # Add facility fields (excluding units) with proper type preservation
+                                # Add facility fields (excluding units and location) with proper type preservation
                                 for key, value in facility_dict.items():
-                                    if key != 'units':
+                                    if key not in ['units', 'location']:
                                         record[key] = convert_field_value(key, value)
+                                
+                                # Extract location fields separately
+                                location = facility_dict.get('location')
+                                if location:
+                                    record['latitude'] = location.get('lat')
+                                    record['longitude'] = location.get('lng')
+                                else:
+                                    record['latitude'] = None
+                                    record['longitude'] = None
                                 
                                 # Add unit fields with proper type preservation
                                 for key, value in unit.items():
@@ -256,8 +274,18 @@ class FacilityResponse(APIResponse[Facility]):
                         # No units, just add facility data
                         record = {}
                         for key, value in facility_dict.items():
-                            if key != 'units':
+                            if key not in ['units', 'location']:
                                 record[key] = convert_field_value(key, value)
+                        
+                        # Extract location fields
+                        location = facility_dict.get('location')
+                        if location:
+                            record['latitude'] = location.get('lat')
+                            record['longitude'] = location.get('lng')
+                        else:
+                            record['latitude'] = None
+                            record['longitude'] = None
+                        
                         records.append(record)
                         
                 except Exception as facility_error:
@@ -319,6 +347,8 @@ class FacilityResponse(APIResponse[Facility]):
             - network_id: str
             - network_region: str
             - description: str
+            - latitude: float
+            - longitude: float
             - unit_code: str
             - fueltech_id: str
             - capacity_registered: float

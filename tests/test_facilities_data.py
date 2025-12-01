@@ -673,13 +673,14 @@ def test_facilities_pandas_dataframe_output(sample_facilities_raw_response):
     
     # Check DataFrame shape
     expected_rows = sum(len(facility.units) for facility in response.data)
-    expected_cols = 13  # The 13 fields in our schema
+    expected_cols = 15  # The 15 fields in our schema (includes latitude and longitude)
     assert df.shape == (expected_rows, expected_cols), f"Expected shape ({expected_rows}, {expected_cols}), got {df.shape}"
     print(f"   ✅ Shape: {df.shape} (correct)")
     
     # Check columns
     expected_columns = {
         "facility_code", "facility_name", "network_id", "network_region", "description",
+        "latitude", "longitude",  # Location fields added
         "unit_code", "fueltech_id", "status_id", "capacity_registered", "emissions_factor_co2", "dispatch_type",
         "data_first_seen", "data_last_seen"
     }
